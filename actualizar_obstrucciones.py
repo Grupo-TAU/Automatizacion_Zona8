@@ -12,9 +12,6 @@ from qgis.core import (
 import processing
 
 
-# ── Tipos de problema que se consideran Obstrucciones ─────────────────────────
-TIPOS_OBSTRUCCION = {"Colector Obstruido", "Colector Interno Obstruido"}
-
 # Campo que identifica unicamente cada reclamo en la capa WFS.
 # Ajustar si tiene otro nombre.
 CAMPO_ID_DEFAULT = "ID_RECLAMO"
@@ -27,13 +24,11 @@ class ActualizarObstrucciones(QgsProcessingAlgorithm):
 
     Flujo:
         1. Intersecta la capa WFS con 'Zona_delimitada'.
-        2. Filtra por DESC_TIPO_PROBLEMA IN ('Colector Obstruido',
-                                              'Colector Interno Obstruido').
-        3. Detecta reclamos nuevos comparando IDs con los ya presentes
+        2. Detecta reclamos nuevos comparando IDs con los ya presentes
            en 'Obstrucciones' (deduplicacion).
-        4. Agrega solo los reclamos nuevos a 'Obstrucciones',
+        3. Agrega solo los reclamos nuevos a 'Obstrucciones',
            mapeando unicamente las columnas existentes en esa capa.
-        5. Elimina las capas auxiliares del proyecto.
+        4. Elimina las capas auxiliares del proyecto.
     """
 
     CAPA_WFS        = "CAPA_WFS"
@@ -62,10 +57,9 @@ class ActualizarObstrucciones(QgsProcessingAlgorithm):
             "provenientes del WFS (V_RE_RECLAMOS_SANEA_PORTAL).\n\n"
             "Pasos internos:\n"
             "  1. Interseccion WFS x Zona_delimitada\n"
-            "  2. Filtrado por tipo de problema\n"
-            "  3. Deduplicacion por campo ID\n"
-            "  4. Incorporacion a Obstrucciones\n"
-            "  5. Limpieza de capas auxiliares\n\n"
+            "  2. Deduplicacion por campo ID\n"
+            "  3. Incorporacion a Obstrucciones\n"
+            "  4. Limpieza de capas auxiliares\n\n"
             f"Parametro 'Campo ID': nombre del campo unico de cada reclamo "
             f"(por defecto: '{CAMPO_ID_DEFAULT}')."
         )
@@ -160,51 +154,23 @@ class ActualizarObstrucciones(QgsProcessingAlgorithm):
             if isinstance(capa_interseccion, QgsVectorLayer):
                 capas_auxiliares.append(capa_interseccion)
 
+            total_interseccion = capa_interseccion.featureCount()
             feedback.pushInfo(
-                f"  ✔ Interseccion completada: "
-                f"{capa_interseccion.featureCount()} features."
+                f"  ✔ Interseccion completada: {total_interseccion} features."
             )
-            feedback.setProgress(30)
+            feedback.setProgress(40)
 
             if feedback.isCanceled():
                 return {self.OUTPUT_AGREGADOS: 0}
 
-            # ── PASO 2: Filtrar por tipo de problema ──────────────────────────
-            feedback.pushInfo("[2/4] Filtrando por tipo de problema ...")
-
-            tipos_sql   = ", ".join(f"'{t}'" for t in TIPOS_OBSTRUCCION)
-            expr_filtro = f'"DESC_TIPO_PROBLEMA" IN ({tipos_sql})'
-
-            res_filtrado = processing.run(
-                "native:extractbyexpression",
-                {
-                    "INPUT":      capa_interseccion,
-                    "EXPRESSION": expr_filtro,
-                    "OUTPUT":     "memory:Candidatas_temp",
-                },
-                context=context,
-                feedback=feedback,
-                is_child_algorithm=True,
-            )
-            capa_candidatas = res_filtrado["OUTPUT"]
-            if isinstance(capa_candidatas, QgsVectorLayer):
-                capas_auxiliares.append(capa_candidatas)
-
-            total_candidatas = capa_candidatas.featureCount()
-            feedback.pushInfo(
-                f"  ✔ Filtrado completado: {total_candidatas} reclamos de obstruccion."
-            )
-            feedback.setProgress(55)
-
-            if feedback.isCanceled():
+            if total_interseccion == 0:
+                feedback.pushInfo("  Sin reclamos en la zona. Fin del proceso.")
                 return {self.OUTPUT_AGREGADOS: 0}
 
-            if total_candidatas == 0:
-                feedback.pushInfo("  Sin nuevos reclamos para agregar. Fin del proceso.")
-                return {self.OUTPUT_AGREGADOS: 0}
+            capa_candidatas = capa_interseccion
 
-            # ── PASO 3: Deduplicar ────────────────────────────────────────────
-            feedback.pushInfo("[3/4] Detectando reclamos nuevos (deduplicacion) ...")
+            # ── PASO 2: Deduplicar ────────────────────────────────────────────
+            feedback.pushInfo("[2/3] Detectando reclamos nuevos (deduplicacion) ...")
 
             ids_existentes = set()
             for feat in obstrucciones.getFeatures(
@@ -245,8 +211,8 @@ class ActualizarObstrucciones(QgsProcessingAlgorithm):
                 feedback.pushInfo("  Obstrucciones ya esta al dia. Sin cambios.")
                 return {self.OUTPUT_AGREGADOS: 0}
 
-            # ── PASO 4: Agregar a Obstrucciones ───────────────────────────────
-            feedback.pushInfo("[4/4] Incorporando reclamos nuevos a Obstrucciones ...")
+            # ── PASO 3: Agregar a Obstrucciones ───────────────────────────────
+            feedback.pushInfo("[3/3] Incorporando reclamos nuevos a Obstrucciones ...")
 
             exito, _ = obstrucciones.dataProvider().addFeatures(features_nuevas)
             if not exito:
