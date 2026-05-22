@@ -1,8 +1,8 @@
 from qgis.core import QgsProcessingProvider
-from .algorithms.actualizar_obstrucciones import ActualizarReclamos
+from .algorithms.actualizar_reclamos_zona8 import ActualizarReclamos
 
 
-class AutomatizacionProvider(QgsProcessingProvider):
+class AutomatizacionZona8Provider(QgsProcessingProvider):
 
     def loadAlgorithms(self):
         self.addAlgorithm(ActualizarReclamos())

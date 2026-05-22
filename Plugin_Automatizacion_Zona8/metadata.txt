@@ -1,0 +1,18 @@
+[general]
+name=Automatizacion Zona 8
+version=0.1.0
+qgisMinimumVersion=3.16
+qgisMaximumVersion=4.99
+description=Automatizacion de flujos de actualizacion de capas para Zona 8.
+author=DICA - Grupo TAU
+email=
+about=Plugin para automatizar la actualizacion de la capa Reclamos_limitado
+      con los reclamos nuevos provenientes del servicio WFS V_RE_RECLAMOS_SANEA_PORTAL.
+tracker=
+repository=
+tags=reclamos, zona8, saneamiento, wfs
+homepage=
+category=Vector
+icon=
+experimental=False
+deprecated=False
