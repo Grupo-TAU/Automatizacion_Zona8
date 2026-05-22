@@ -8,8 +8,8 @@ def classFactory(iface):
 class AutomatizacionPlugin:
 
     def __init__(self, iface):
-        self.iface     = iface
-        self.provider  = None
+        self.iface    = iface
+        self.provider = None
 
     def initProcessing(self):
         self.provider = AutomatizacionProvider()

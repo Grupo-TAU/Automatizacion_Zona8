@@ -1,11 +1,11 @@
 from qgis.core import QgsProcessingProvider
-from .algorithms.actualizar_obstrucciones import ActualizarObstrucciones
+from .algorithms.actualizar_obstrucciones import ActualizarReclamos
 
 
 class AutomatizacionProvider(QgsProcessingProvider):
 
     def loadAlgorithms(self):
-        self.addAlgorithm(ActualizarObstrucciones())
+        self.addAlgorithm(ActualizarReclamos())
 
     def id(self):
         return "automatizacion_zona8"
