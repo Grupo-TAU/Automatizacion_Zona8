@@ -14,7 +14,7 @@ import processing
 
 # ── Conexion WFS ───────────────────────────────────────────────────────────────
 WFS_URL      = "https://geoserver-ssl.imm.gub.uy/geoserver/ows"
-WFS_TYPENAME = "imm:V_RE_RECLAMOS_SANEA_PORTAL"
+WFS_TYPENAME = "imm:V_RE_PROBLEMAS_ABIERTOS_SANEA"
 
 # Campo que identifica unicamente cada reclamo en la capa WFS.
 CAMPO_ID_DEFAULT = "NUMERO_RECLAMO"
@@ -22,47 +22,47 @@ CAMPO_ID_DEFAULT = "NUMERO_RECLAMO"
 
 class ActualizarReclamos(QgsProcessingAlgorithm):
     """
-    Actualiza la capa maestra 'Reclamos_limitado' incorporando los reclamos nuevos
-    provenientes del servicio WFS (V_RE_RECLAMOS_SANEA_PORTAL).
+    Actualiza la capa maestra 'problemas_maestra' incorporando los problemas nuevos
+    provenientes del servicio WFS (V_RE_PROBLEMAS_ABIERTOS_SANEA).
 
     Flujo:
         1. Intersecta la capa WFS con 'Zona_delimitada'.
-        2. Detecta reclamos nuevos comparando IDs con los ya presentes
-           en 'Reclamos_limitado' (deduplicacion).
-        3. Agrega solo los reclamos nuevos a 'Reclamos_limitado',
+        2. Detecta problemas nuevos comparando IDs con los ya presentes
+           en 'Problemas_limitado' (deduplicacion).
+        3. Agrega solo los problemas nuevos a 'Problemas_limitado',
            mapeando unicamente las columnas existentes en esa capa.
         4. Elimina las capas auxiliares del proyecto.
     """
 
     ZONA_DELIMITADA = "ZONA_DELIMITADA"
-    RECLAMOS_LIMITADO = "RECLAMOS_LIMITADO"
+    PROBLEMAS_LIMITADO = "PROBLEMAS_LIMITADO"
     CAMPO_ID          = "CAMPO_ID"
-    OUTPUT_AGREGADOS  = "RECLAMOS_AGREGADOS"
+    OUTPUT_AGREGADOS  = "PROBLEMAS_AGREGADOS"
 
     # ── Metadatos ──────────────────────────────────────────────────────────────
 
     def name(self):
-        return "actualizar_reclamos"
+        return "actualizar_problemas"
 
     def displayName(self):
         return "Actualizar Obstrucciones"
 
     def group(self):
-        return "Reclamos"
+        return "Problemas"
 
     def groupId(self):
-        return "reclamos"
+        return "problemas"
 
     def shortHelpString(self):
         return (
-            "Actualiza la capa maestra 'Reclamos_limitado' con los reclamos nuevos\n"
-            "provenientes del WFS (V_RE_RECLAMOS_SANEA_PORTAL).\n\n"
+            "Actualiza la capa maestra 'Problemas_limitado' con los problemas nuevos\n"
+            "provenientes del WFS (V_RE_PROBLEMAS_ABIERTOS_SANEA).\n\n"
             "Pasos internos:\n"
             "  1. Conexion al WFS\n"
             "  2. Interseccion WFS x Zona_delimitada\n"
             "  3. Deduplicacion por campo ID\n"
-            "  4. Incorporacion a Reclamos_limitado\n\n"
-            f"Parametro 'Campo ID': nombre del campo unico de cada reclamo "
+            "  4. Incorporacion a Problemas_limitado\n\n"
+            f"Parametro 'Campo ID': nombre del campo unico de cada problema "
             f"(por defecto: '{CAMPO_ID_DEFAULT}')."
         )
 
@@ -80,21 +80,21 @@ class ActualizarReclamos(QgsProcessingAlgorithm):
         )
         self.addParameter(
             QgsProcessingParameterVectorLayer(
-                self.RECLAMOS_LIMITADO,
-                "Capa maestra Reclamos_limitado",
+                self.PROBLEMAS_LIMITADO,
+                "Capa maestra Problemas_limitado",
             )
         )
         self.addParameter(
             QgsProcessingParameterString(
                 self.CAMPO_ID,
-                "Campo ID unico del reclamo",
+                "Campo ID unico del problema",
                 defaultValue=CAMPO_ID_DEFAULT,
             )
         )
         self.addOutput(
             QgsProcessingOutputNumber(
                 self.OUTPUT_AGREGADOS,
-                "Reclamos nuevos agregados",
+                "Problemas nuevos agregados",
             )
         )
 
@@ -103,20 +103,20 @@ class ActualizarReclamos(QgsProcessingAlgorithm):
     def processAlgorithm(self, parameters, context, feedback):
 
         zona_delimitada   = self.parameterAsVectorLayer(parameters, self.ZONA_DELIMITADA,   context)
-        reclamos          = self.parameterAsVectorLayer(parameters, self.RECLAMOS_LIMITADO, context)
+        problemas          = self.parameterAsVectorLayer(parameters, self.PROBLEMAS_LIMITADO, context)
         campo_id          = self.parameterAsString    (parameters, self.CAMPO_ID,           context).strip()
 
         # ── Validaciones ───────────────────────────────────────────────────────
 
         if not zona_delimitada or not zona_delimitada.isValid():
             raise QgsProcessingException("La capa Zona_delimitada no es valida.")
-        if not reclamos or not reclamos.isValid():
-            raise QgsProcessingException("La capa Reclamos_limitado no es valida.")
+        if not problemas or not problemas.isValid():
+            raise QgsProcessingException("La capa Problemas_limitado no es valida.")
 
-        if reclamos.fields().lookupField(campo_id) == -1:
+        if problemas.fields().lookupField(campo_id) == -1:
             raise QgsProcessingException(
-                f"El campo ID '{campo_id}' no existe en Reclamos_limitado. "
-                f"Campos disponibles: {[f.name() for f in reclamos.fields()]}"
+                f"El campo ID '{campo_id}' no existe en Problemas_limitado. "
+                f"Campos disponibles: {[f.name() for f in problemas.fields()]}"
             )
         capas_auxiliares = []
         cant_nuevos      = 0
@@ -133,7 +133,7 @@ class ActualizarReclamos(QgsProcessingAlgorithm):
                 f"version='auto' "
                 f"srsname='EPSG:32721'"
             )
-            capa_wfs = QgsVectorLayer(uri_wfs, "WFS_Reclamos", "WFS")
+            capa_wfs = QgsVectorLayer(uri_wfs, "WFS_Problemas", "WFS")
             if not capa_wfs.isValid():
                 raise QgsProcessingException(
                     f"No se pudo conectar al WFS: {WFS_URL}\n"
@@ -144,7 +144,7 @@ class ActualizarReclamos(QgsProcessingAlgorithm):
                     f"El campo ID '{campo_id}' no existe en la capa WFS. "
                     f"Campos disponibles: {[f.name() for f in capa_wfs.fields()]}"
                 )
-            feedback.pushInfo(f"  ✔ WFS conectado: {capa_wfs.featureCount()} reclamos disponibles.")
+            feedback.pushInfo(f"  ✔ WFS conectado: {capa_wfs.featureCount()} problemas disponibles.")
 
             # ── PASO 1: Interseccion WFS x Zona_delimitada ────────────────────
             feedback.pushInfo("[1/3] Intersectando WFS con Zona_delimitada ...")
@@ -176,16 +176,16 @@ class ActualizarReclamos(QgsProcessingAlgorithm):
                 return {self.OUTPUT_AGREGADOS: 0}
 
             if total_interseccion == 0:
-                feedback.pushInfo("  Sin reclamos en la zona. Fin del proceso.")
+                feedback.pushInfo("  Sin problemas en la zona. Fin del proceso.")
                 return {self.OUTPUT_AGREGADOS: 0}
 
             capa_candidatas = capa_interseccion
 
             # ── PASO 2: Deduplicar ────────────────────────────────────────────
-            feedback.pushInfo("[2/3] Detectando reclamos nuevos (deduplicacion) ...")
+            feedback.pushInfo("[2/3] Detectando problemas nuevos (deduplicacion) ...")
 
             ids_existentes = set()
-            for feat in reclamos.getFeatures(
+            for feat in problemas.getFeatures(
                 QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry)
             ):
                 val = feat[campo_id]
@@ -193,10 +193,10 @@ class ActualizarReclamos(QgsProcessingAlgorithm):
                     ids_existentes.add(str(val).strip())
 
             feedback.pushInfo(
-                f"  IDs ya presentes en Reclamos: {len(ids_existentes)}"
+                f"  IDs ya presentes en Problemas: {len(ids_existentes)}"
             )
 
-            campos_obs      = reclamos.fields()
+            campos_obs      = problemas.fields()
             nombres_obs     = [f.name() for f in campos_obs]
             features_nuevas = []
             ids_nuevos      = []
@@ -220,34 +220,34 @@ class ActualizarReclamos(QgsProcessingAlgorithm):
                 ids_nuevos.append(str(val_id).strip())
 
             cant_nuevos = len(features_nuevas)
-            feedback.pushInfo(f"  Reclamos nuevos a agregar: {cant_nuevos}")
+            feedback.pushInfo(f"  Problemas nuevos a agregar: {cant_nuevos}")
             feedback.setProgress(75)
 
             if cant_nuevos == 0:
-                feedback.pushInfo(" Reclamos ya estan actualizados. Sin cambios.")
+                feedback.pushInfo("  Problemas ya estan actualizados. Sin cambios.")
                 return {self.OUTPUT_AGREGADOS: 0}
 
             # ── PASO 3: Agregar a Obstrucciones ───────────────────────────────
-            feedback.pushInfo("[3/3] Incorporando reclamos nuevos ...")
+            feedback.pushInfo("[3/3] Incorporando problemas nuevos ...")
 
-            ya_editando = reclamos.isEditable()
+            ya_editando = problemas.isEditable()
             if not ya_editando:
-                reclamos.startEditing()
+                problemas.startEditing()
 
-            exito = reclamos.addFeatures(features_nuevas)
+            exito = problemas.addFeatures(features_nuevas)
             if not exito:
-                reclamos.rollBack()
+                problemas.rollBack()
                 raise QgsProcessingException(
-                    "No se pudieron agregar los nuevos reclamos. "
+                    "No se pudieron agregar los nuevos problemas. "
                     "Verificar que la capa no este en modo solo lectura."
                 )
 
             if not ya_editando:
-                reclamos.commitChanges()
+                problemas.commitChanges()
 
-            reclamos.updateExtents()
+            problemas.updateExtents()
             feedback.pushInfo(
-                f"  ✔ {cant_nuevos} reclamos nuevos agregados."
+                f"  ✔ {cant_nuevos} problemas nuevos agregados."
             )
             feedback.setProgress(95)
 
@@ -265,7 +265,7 @@ class ActualizarReclamos(QgsProcessingAlgorithm):
 
         ids_str = ", ".join(ids_nuevos) if ids_nuevos else "-"
         feedback.pushInfo(
-            f"\n=== Actualizacion completada: {cant_nuevos} reclamos nuevos agregados. ==="
+            f"\n=== Actualizacion completada: {cant_nuevos} problemas nuevos agregados. ==="
         )
         feedback.pushInfo(f"IDs incorporados: {ids_str}")
         return {self.OUTPUT_AGREGADOS: cant_nuevos}
