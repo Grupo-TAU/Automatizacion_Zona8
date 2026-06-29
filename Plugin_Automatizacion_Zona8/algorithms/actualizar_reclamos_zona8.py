@@ -16,8 +16,8 @@ import processing
 WFS_URL      = "https://geoserver-ssl.imm.gub.uy/geoserver/ows"
 WFS_TYPENAME = "imm:V_RE_PROBLEMAS_ABIERTOS_SANEA"
 
-# Campo que identifica unicamente cada reclamo en la capa WFS.
-CAMPO_ID_DEFAULT = "NUMERO_RECLAMO"
+# Campo que identifica unicamente cada problema en la capa WFS.
+CAMPO_ID_DEFAULT = "NUMERO_PROBLEMA"
 
 
 class ActualizarReclamos(QgsProcessingAlgorithm):
