@@ -26,22 +26,22 @@ Incorpora automáticamente los reclamos nuevos a la capa maestra `Reclamos_limit
 
 | Parámetro | Tipo | Descripción |
 |---|---|---|
-| Capa Zona_delimitada | Capa vectorial | Polígono que define el área de trabajo. Solo se incorporan reclamos que caigan dentro de esta zona. |
 | Capa maestra Reclamos_limitado | Capa vectorial | Capa GeoPackage destino donde se agregan los reclamos nuevos. |
 | Campo ID único del reclamo | Texto | Nombre del campo que identifica unívocamente cada reclamo. Por defecto: `NUMERO_RECLAMO`. |
+| Eliminar problemas finalizados | Booleano | Si está activo (por defecto), borra de la capa maestra los reclamos que ya no figuran en el WFS. |
 
 #### Flujo interno
 
 1. **Conexión al WFS** — El algoritmo se conecta directamente a `https://geoserver-ssl.imm.gub.uy/geoserver/ows` y descarga la capa `V_RE_RECLAMOS_SANEA_PORTAL`. No es necesario exportar la capa manualmente.
-2. **Intersección** — Se recortan los reclamos al área definida por `Zona_delimitada`.
-3. **Deduplicación** — Se comparan los IDs de los reclamos intersectados contra los ya presentes en `Reclamos_limitado`. Solo se procesan los que no existen.
-4. **Incorporación** — Los reclamos nuevos se agregan a `Reclamos_limitado` mapeando únicamente los campos existentes en esa capa.
-5. **Limpieza** — Se eliminan las capas auxiliares temporales generadas durante el proceso.
+2. **Deduplicación y detección de finalizados** — Se comparan los IDs del WFS contra los ya presentes en `Reclamos_limitado`. Solo se procesan los que no existen, descartando además los IDs repetidos dentro de la misma corrida. En paralelo se marcan los registros de la capa maestra cuyo ID ya no está en el WFS: como el servicio solo publica reclamos abiertos, esos se consideran finalizados.
+3. **Alta y baja** — Los reclamos nuevos se agregan a `Reclamos_limitado` mapeando únicamente los campos existentes en esa capa, y los finalizados se eliminan. Ambas operaciones van en una sola sesión de edición.
+
+> La limpieza se omite si el WFS no devuelve ningún ID, para que una falla del servicio no vacíe la capa. Los registros sin valor en el campo ID (cargados a mano) nunca se eliminan.
 
 #### Salida
 
-- **Log del algoritmo**: cantidad de reclamos nuevos incorporados e IDs de cada uno.
-- **Capa Reclamos_limitado**: actualizada con los registros nuevos.
+- **Log del algoritmo**: cantidad de reclamos incorporados y eliminados, con el detalle de IDs de cada grupo.
+- **Capa Reclamos_limitado**: actualizada con los registros nuevos y sin los finalizados.
 
 ---
 
