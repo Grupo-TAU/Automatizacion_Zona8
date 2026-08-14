@@ -1,6 +1,6 @@
 [general]
 name=Automatizacion Zona 8
-version=0.2.2
+version=0.2.3
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
 description=Automatizacion de flujos de actualizacion de capas para Zona 8.

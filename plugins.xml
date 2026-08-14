@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <plugins>
-  <pyqgis_plugin name="Automatizacion Zona 8" version="0.2.2">
+  <pyqgis_plugin name="Automatizacion Zona 8" version="0.2.3">
     <description>Automatizacion de flujos de actualizacion de capas para Zona 8</description>
-    <version>0.2.2|</version>
+    <version>0.2.3</version>
     <qgis_minimum_version>3.16</qgis_minimum_version>
     <qgis_maximum_version>4.99</qgis_maximum_version>
     <homepage>https://github.com/Grupo-TAU/Automatizacion_Zona8</homepage>
