@@ -57,3 +57,23 @@ Incorpora automáticamente los reclamos nuevos a la capa maestra `Reclamos_limit
 | Capa | `imm:V_RE_RECLAMOS_SANEA_PORTAL` |
 | SRS | `EPSG:32721` |
 | Autenticación | Sin autenticación |
+
+---
+
+## Publicar una versión nueva
+
+El plugin se distribuye por repositorio de complementos personalizado: los usuarios configuran `plugins.xml` en **Complementos → Configuración → Repositorios** y QGIS lo consulta para saber si hay versión nueva.
+
+```
+1. Editar version= en Plugin_Automatizacion_Zona8/metadata.txt
+2. python desplegar.py --lanzamiento
+3. Ejecutar los comandos git que imprime el script
+```
+
+`desplegar.py --lanzamiento` empaqueta el plugin, escribe el zip en `Lanzamientos/` y reescribe `plugins.xml` derivándolo de `metadata.txt`. Para probar antes de publicar: `python desplegar.py --instalar` lo copia al perfil local de QGIS.
+
+**`metadata.txt` es la única fuente de verdad de la versión.** `plugins.xml` no se edita a mano: el número vive en tres lugares (el atributo `version=`, el elemento `<version>` y `metadata.txt`) y moverlos por separado es el error más fácil de cometer.
+
+**QGIS decide si hay actualización comparando solo el número de versión**, no fechas ni contenido. Si se sube un zip nuevo sin subir la versión, los usuarios no reciben nada y no aparece ningún error. Por eso el script se niega a publicar si el contenido cambió y la versión no (usar `--forzar` solo para reparar un release ya publicado).
+
+**El nombre del zip es fijo**, sin número de versión: el `download_url` del XML es una URL estática y versionar el nombre la rompería.
