@@ -8,6 +8,8 @@ from qgis.core import (
     QgsFeature,
     QgsGeometry,
     QgsCoordinateTransform,
+    QgsSpatialIndex,
+    QgsCsException,
 )
 from PyQt5.QtCore import QVariant, QDate
 
@@ -17,15 +19,12 @@ from PyQt5.QtCore import QVariant, QDate
 # TODO: si esto varía entre las 6 PCs, migrar a QgsSettings en vez de constante.
 RAIZ_IMAGENES = r"G:\Unidades compartidas\GRUPO TAU\INTENDENCIA DE MONTEVIDEO\SOMS\IMAGENES_OS"
 
-CAPA_OS = "inspecciones_OS"
+CAPA_OS = "problemas_sur"
 CAPA_PADRONES = "padrones"
 CAMPO_PADRON = "padron"
 
-CAPA_FOTOS_OS = "fotos_OS"
-CAMPO_FOTOS_OS_N_OS = "N°_OS"
-CAMPO_FOTOS_OS_RUTA = "ruta_relativa"
-# CAMPO_FOTOS_OS_RUTA es relativa a esta carpeta.
-CARPETA_ORIGEN_FOTOS = r"C:\Proyectos-QGisCloud\QField\cloud\inspecciones_os"
+CAPA_ZONA = "Zona_delimitada"
+CAMPO_FUERA_ZONA = "fuera_zona"
 
 CAMPOS_PASO1 = [
     ("N°_OS", QVariant.String),
@@ -42,8 +41,21 @@ CAMPOS_PASO1 = [
 
 
 def obtener_capa(nombre):
+    """
+    Busca la capa por nombre exacto y, si no aparece, reintenta ignorando
+    mayusculas/minusculas: los nombres de capa del proyecto no siempre respetan
+    el mismo casing (problemas_sur / Problemas_Sur) y mapLayersByName()
+    distingue mayusculas.
+    """
     capas = QgsProject.instance().mapLayersByName(nombre)
-    return capas[0] if capas else None
+    if capas:
+        return capas[0]
+
+    objetivo = nombre.casefold()
+    for capa in QgsProject.instance().mapLayers().values():
+        if capa.name().casefold() == objetivo:
+            return capa
+    return None
 
 
 def buscar_punto_padron(numero_padron):
@@ -82,29 +94,68 @@ def buscar_punto_padron(numero_padron):
     return punto
 
 
-def buscar_rutas_fotos_os(numero_os):
+# ─────────────────────────────────────────────────────────────────────────────
+# CLASIFICACIÓN DENTRO / FUERA DE LA ZONA DELIMITADA
+# ─────────────────────────────────────────────────────────────────────────────
+def construir_clasificador(capa_zonas, crs_puntos):
     """
-    Devuelve la lista de rutas (campo CAMPO_FOTOS_OS_RUTA, relativa a
-    CARPETA_ORIGEN_FOTOS) de las fotos asociadas a numero_os en la capa
-    CAPA_FOTOS_OS.
+    Devuelve fn(geom_punto) -> bool|None. True = el punto cae fuera de la zona.
+    None = no se pudo determinar (geometría vacía o error de reproyección).
+
+    El índice espacial y las geometrías se cargan una sola vez, así que conviene
+    construir el clasificador una vez y reutilizarlo para varios puntos
+    (ej: al cargar un itinerario completo).
     """
-    capa = obtener_capa(CAPA_FOTOS_OS)
+    geoms = {f.id(): f.geometry() for f in capa_zonas.getFeatures()}
+    idx = QgsSpatialIndex()
+    for fid, g in geoms.items():
+        idx.addFeature(fid, g.boundingBox())
+
+    tr = QgsCoordinateTransform(crs_puntos, capa_zonas.crs(), QgsProject.instance())
+
+    def fuera_zona(geom_punto):
+        if geom_punto is None or geom_punto.isEmpty():
+            return None
+        g = QgsGeometry(geom_punto)
+        try:
+            g.transform(tr)
+        except QgsCsException:
+            return None
+        for fid in idx.intersects(g.boundingBox()):
+            if geoms[fid].intersects(g):
+                return False
+        return True
+
+    return fuera_zona
+
+
+def clasificar_fuera_zona(geom_punto):
+    """
+    Atajo para un único punto: True si cae fuera de CAPA_ZONA, False si cae
+    dentro, None si la capa no está en el proyecto o no se pudo determinar.
+    """
+    capa = obtener_capa(CAPA_ZONA)
     if capa is None:
-        raise ValueError(f"No se encontró la capa '{CAPA_FOTOS_OS}' en el proyecto.")
-
-    idx = capa.fields().indexOf(CAMPO_FOTOS_OS_N_OS)
-    if idx < 0:
-        raise ValueError(f"La capa '{CAPA_FOTOS_OS}' no tiene el campo '{CAMPO_FOTOS_OS_N_OS}'.")
-
-    numero_os = str(numero_os).strip()
-    return [
-        f[CAMPO_FOTOS_OS_RUTA]
-        for f in capa.getFeatures()
-        if str(f[CAMPO_FOTOS_OS_N_OS]).strip() == numero_os and f[CAMPO_FOTOS_OS_RUTA]
-    ]
+        return None
+    return construir_clasificador(capa, QgsProject.instance().crs())(geom_punto)
 
 
-def agregar_feature_os(datos, punto_xy):
+def _valor_fuera_zona(capa, idx_campo, fuera):
+    """Adapta el bool al tipo real del campo en la capa (bool / texto / entero)."""
+    tipo = capa.fields().at(idx_campo).type()
+    if tipo == QVariant.Bool:
+        return fuera
+    if tipo in (QVariant.Int, QVariant.LongLong, QVariant.Double):
+        return int(fuera)
+    return "Si" if fuera else "No"
+
+
+def agregar_feature_os(datos, punto_xy, fuera_zona=None):
+    """
+    Da de alta la OS en CAPA_OS y devuelve el valor calculado de fuera_zona
+    (True/False/None). `fuera_zona` permite pasar un clasificador ya construido
+    con construir_clasificador() para no releer las zonas en cada alta.
+    """
     capa = obtener_capa(CAPA_OS)
     if capa is None:
         raise ValueError(f"No se encontró la capa '{CAPA_OS}' en el proyecto.")
@@ -113,9 +164,19 @@ def agregar_feature_os(datos, punto_xy):
         capa.startEditing()
 
     feat = QgsFeature(capa.fields())
-    feat.setGeometry(QgsGeometry.fromPointXY(punto_xy))
+    geom = QgsGeometry.fromPointXY(punto_xy)
+    feat.setGeometry(geom)
 
     indices_seteados = set()
+
+    # "fuera_zona" no se pide en el formulario: se resuelve intersectando el
+    # punto con CAPA_ZONA. Si la capa no está cargada, el campo queda NULL.
+    fuera = clasificar_fuera_zona(geom) if fuera_zona is None else fuera_zona(geom)
+    idx_fz = capa.fields().lookupField(CAMPO_FUERA_ZONA)
+    if idx_fz >= 0 and fuera is not None:
+        feat.setAttribute(idx_fz, _valor_fuera_zona(capa, idx_fz, fuera))
+        indices_seteados.add(idx_fz)
+
     for nombre_campo, tipo in CAMPOS_PASO1:
         idx = capa.fields().indexOf(nombre_campo)
         if idx >= 0 and nombre_campo in datos:
@@ -136,3 +197,5 @@ def agregar_feature_os(datos, punto_xy):
     capa.addFeature(feat)
     capa.commitChanges()
     capa.triggerRepaint()
+
+    return fuera

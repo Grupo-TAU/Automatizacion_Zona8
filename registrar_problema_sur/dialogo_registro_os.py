@@ -1,5 +1,6 @@
 import os
 
+from qgis.core import QgsProject
 from qgis.gui import QgsMapToolEmitPoint
 from qgis.utils import iface
 
@@ -11,7 +12,10 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QFont, QCursor
 
-from .capa_utils import RAIZ_IMAGENES, buscar_punto_padron, agregar_feature_os, CAPA_PADRONES
+from .capa_utils import (
+    RAIZ_IMAGENES, buscar_punto_padron, agregar_feature_os, obtener_capa,
+    construir_clasificador, CAPA_PADRONES, CAPA_ZONA,
+)
 from .pdf_parser import (
     parsear_pdf_os, parsear_pdf_itinerario, pdfplumber_disponible, instalar_pdfplumber,
 )
@@ -36,6 +40,8 @@ class DialogoRegistroOS(QDialog):
         self._cola_itinerario = []  # datos de las OS pendientes (excluye la que está en pantalla)
         self._total_itinerario = 0  # 0 = no se está cargando un itinerario
         self._nombre_itinerario = ""
+        self._clasificador_zona = None      # se arma una sola vez por diálogo
+        self._clasificador_zona_listo = False
         self._build_ui()
 
     def _campo(self, placeholder=""):
@@ -330,6 +336,28 @@ class DialogoRegistroOS(QDialog):
                 "Hacé clic manualmente en el mapa para ubicarla."
             )
 
+    # ── Zona delimitada ──────────────────────────────────────────────────────
+    def _obtener_clasificador_zona(self):
+        """
+        Construye el clasificador dentro/fuera de zona una sola vez por diálogo:
+        al cargar un itinerario se reutiliza para todas las OS. Devuelve None si
+        CAPA_ZONA no está en el proyecto.
+        """
+        if not self._clasificador_zona_listo:
+            capa = obtener_capa(CAPA_ZONA)
+            if capa is not None:
+                self._clasificador_zona = construir_clasificador(
+                    capa, QgsProject.instance().crs()
+                )
+            self._clasificador_zona_listo = True
+        return self._clasificador_zona
+
+    @staticmethod
+    def _texto_fuera_zona(fuera):
+        if fuera is None:
+            return f"sin determinar (falta la capa '{CAPA_ZONA}')"
+        return "Sí" if fuera else "No"
+
     # ── Validación ───────────────────────────────────────────────────────────
     def _validar(self):
         errores = []
@@ -366,7 +394,9 @@ class DialogoRegistroOS(QDialog):
             datos["N° Trabajo"] = n_trabajo
 
         try:
-            agregar_feature_os(datos, self.punto_xy)
+            fuera = agregar_feature_os(
+                datos, self.punto_xy, self._obtener_clasificador_zona()
+            )
         except Exception as e:
             QMessageBox.critical(self, "Error al registrar en QGIS", str(e))
             return
@@ -380,7 +410,8 @@ class DialogoRegistroOS(QDialog):
         if self._cola_itinerario:
             QMessageBox.information(
                 self, "OS Registrada",
-                f"✓ OS {datos['N°_OS']} registrada.\n\n"
+                f"✓ OS {datos['N°_OS']} registrada.\n"
+                f"  Fuera de zona: {self._texto_fuera_zona(fuera)}\n\n"
                 f"Quedan {len(self._cola_itinerario)} OS por cargar en este itinerario."
             )
             siguiente = self._cola_itinerario.pop(0)
@@ -393,7 +424,8 @@ class DialogoRegistroOS(QDialog):
             f"✓ OS {datos['N°_OS']} registrada correctamente.\n\n"
             f"  Ubicación : {datos['Ubicación']}\n"
             f"  Etapa     : {datos['Etapa']}\n"
-            f"  Restringir: Si"
+            f"  Restringir: Si\n"
+            f"  Fuera de zona: {self._texto_fuera_zona(fuera)}"
             f"{extra}"
         )
         self.accept()
