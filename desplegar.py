@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
 """
-desplegar.py - Empaquetado, publicacion e instalacion del plugin Automatizacion Zona 8.
+desplegar.py - Empaquetado, publicacion e instalacion de los plugins de este repo.
+
+Este repo aloja MAS DE UN plugin de QGIS (cada uno en su propia carpeta, con su
+propio metadata.txt), publicados a traves de un unico plugins.xml. Por eso todas
+las acciones piden --plugin <carpeta> explicito: no hay "el" plugin por defecto.
 
 Ciclo de publicacion completo:
 
-    1. Editar la version en Plugin_Automatizacion_Zona8/metadata.txt.
-    2. python desplegar.py --lanzamiento
+    1. Editar la version en <carpeta_del_plugin>/metadata.txt.
+    2. python desplegar.py --plugin <carpeta> --lanzamiento
     3. Ejecutar los comandos git que imprime el script.
 
-metadata.txt es la UNICA fuente de verdad: plugins.xml se deriva de el, nunca al
-reves. QGIS decide si hay actualizacion comparando solo el numero de version del
-XML contra el instalado, asi que publicar sin subir la version no produce ningun
-error visible: simplemente los usuarios no reciben nada.
+metadata.txt es la UNICA fuente de verdad de cada plugin: plugins.xml se deriva
+de el, nunca al reves. QGIS decide si hay actualizacion comparando solo el
+numero de version del XML contra el instalado, asi que publicar sin subir la
+version no produce ningun error visible: simplemente los usuarios no reciben
+nada.
+
+Plugins registrados en PLUGINS (ver mas abajo):
+    Plugin_Automatizacion_Zona8  - sincronizacion de Reclamos/Problemas via WFS
+    registrar_problema_sur       - fork de registrar_os_plugin para Zona 8 - Sur
 """
 from __future__ import annotations
 
@@ -23,31 +32,73 @@ import os
 import shutil
 import sys
 import xml.etree.ElementTree as ET
-import zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
+import zipfile
 
 
 # ── Rutas del repo ────────────────────────────────────────────────────────────
-RAIZ          = Path(__file__).resolve().parent
-NOMBRE_PLUGIN = "Plugin_Automatizacion_Zona8"
-DIR_PLUGIN    = RAIZ / NOMBRE_PLUGIN
-METADATA      = DIR_PLUGIN / "metadata.txt"
-PLUGINS_XML   = RAIZ / "plugins.xml"
+RAIZ        = Path(__file__).resolve().parent
+PLUGINS_XML = RAIZ / "plugins.xml"
 
-# El nombre del zip es FIJO y no lleva numero de version: el <download_url> de
-# plugins.xml es una URL estatica. Si el nombre cambiara en cada release, la URL
-# dejaria de encontrar el archivo.
-ZIP_DESTINO = RAIZ / "Lanzamientos" / f"{NOMBRE_PLUGIN}.zip"
+# URLs base del repo en GitHub: de aca se arma el download_url esperado de cada
+# plugin al crear su entrada en plugins.xml por primera vez. RAW_REPO usa el
+# mismo dominio (raw.githubusercontent.com) que ya usa la entrada existente.
+HOMEPAGE_REPO = "https://github.com/Grupo-TAU/Automatizacion_Zona8"
+RAW_REPO = "https://raw.githubusercontent.com/Grupo-TAU/Automatizacion_Zona8/main"
+
+
+@dataclass(frozen=True)
+class Plugin:
+    """Un plugin publicado desde este repo. La carpeta es tambien el nombre del zip."""
+    carpeta: str
+    archivos_requeridos: tuple[str, ...]
+    # (ruta_en_el_repo, ruta_relativa_dentro_de_la_carpeta_del_plugin)
+    paquetes_vendorizados: tuple[tuple[Path, str], ...] = field(default_factory=tuple)
+
+    @property
+    def dir(self) -> Path:
+        return RAIZ / self.carpeta
+
+    @property
+    def metadata_path(self) -> Path:
+        return self.dir / "metadata.txt"
+
+    @property
+    def zip_destino(self) -> Path:
+        return RAIZ / "Lanzamientos" / f"{self.carpeta}.zip"
+
 
 # Paquetes propios que viven fuera de la carpeta del plugin y tienen que viajar
 # adentro del zip: QGIS copia unicamente la carpeta del plugin al perfil del
-# usuario, cualquier cosa que quede afuera no llega. Formato:
-#     (ruta_en_el_repo, ruta_relativa_dentro_de_la_carpeta_del_plugin)
-# Hoy esta vacio a proposito: el plugin solo importa qgis.core, processing y sus
-# propios modulos relativos. Si mas adelante aparece un paquete compartido, se
-# agrega aca y verificar_zip() controla que llegue completo.
-PAQUETES_VENDORIZADOS: list[tuple[Path, str]] = []
+# usuario, cualquier cosa que quede afuera no llega. Hoy ningun plugin de este
+# repo depende de uno; si aparece un paquete compartido, se agrega a la entrada
+# correspondiente en PLUGINS y verificar_zip() controla que llegue completo.
+PLUGINS: dict[str, Plugin] = {
+    "Plugin_Automatizacion_Zona8": Plugin(
+        carpeta="Plugin_Automatizacion_Zona8",
+        archivos_requeridos=("__init__.py", "metadata.txt", "plugin.py", "provider.py"),
+    ),
+    "registrar_problema_sur": Plugin(
+        carpeta="registrar_problema_sur",
+        archivos_requeridos=("__init__.py", "metadata.txt"),
+    ),
+}
+
+
+def _elegir_plugin(nombre: str | None) -> Plugin:
+    if nombre is None:
+        raise ErrorDespliegue(
+            "Falta --plugin <carpeta>. Este repo publica mas de un plugin, no hay "
+            f"uno por defecto. Opciones: {', '.join(sorted(PLUGINS))}"
+        )
+    if nombre not in PLUGINS:
+        raise ErrorDespliegue(
+            f"'{nombre}' no es un plugin conocido. Opciones: {', '.join(sorted(PLUGINS))}"
+        )
+    return PLUGINS[nombre]
+
 
 # ── Empaquetado ───────────────────────────────────────────────────────────────
 DIRS_EXCLUIDOS = {
@@ -57,7 +108,6 @@ PATRONES_EXCLUIDOS = (
     "*.pyc", "*.pyo", "*.pyd", "*.swp", "*.orig", "*.rej", "*.log",
     ".DS_Store", "Thumbs.db", "~$*",
 )
-ARCHIVOS_REQUERIDOS = ("__init__.py", "metadata.txt", "plugin.py", "provider.py")
 
 # Fecha fija para todas las entradas del zip. Hace que el empaquetado sea
 # reproducible: si el codigo no cambio, el zip es byte a byte identico y git no
@@ -89,15 +139,15 @@ def aviso(texto: str) -> None:
 
 # ── metadata.txt ──────────────────────────────────────────────────────────────
 
-def leer_metadata() -> dict[str, str]:
-    """Lee metadata.txt, la unica fuente de verdad de la version."""
-    if not METADATA.is_file():
-        raise ErrorDespliegue(f"No se encontro metadata.txt en {METADATA}")
+def leer_metadata(plugin: Plugin) -> dict[str, str]:
+    """Lee metadata.txt del plugin, la unica fuente de verdad de la version."""
+    if not plugin.metadata_path.is_file():
+        raise ErrorDespliegue(f"No se encontro metadata.txt en {plugin.metadata_path}")
 
     cp = configparser.ConfigParser()
     cp.optionxform = str          # preservar el camelCase de qgisMinimumVersion
     try:
-        cp.read(METADATA, encoding="utf-8")
+        cp.read(plugin.metadata_path, encoding="utf-8")
     except configparser.Error as exc:
         raise ErrorDespliegue(f"metadata.txt esta mal formado: {exc}") from exc
 
@@ -141,24 +191,24 @@ def _recolectar(origen: Path, prefijo: str) -> list[tuple[Path, str]]:
     return entradas
 
 
-def construir_zip() -> tuple[bytes, list[str]]:
+def construir_zip(plugin: Plugin) -> tuple[bytes, list[str]]:
     """
     Arma el zip en memoria con la carpeta del plugin en la raiz, que es el
     formato que espera QGIS. No escribe nada: si la verificacion posterior
     falla, el zip publicado queda intacto.
     """
-    if not DIR_PLUGIN.is_dir():
-        raise ErrorDespliegue(f"No existe la carpeta del plugin: {DIR_PLUGIN}")
+    if not plugin.dir.is_dir():
+        raise ErrorDespliegue(f"No existe la carpeta del plugin: {plugin.dir}")
 
-    entradas = _recolectar(DIR_PLUGIN, NOMBRE_PLUGIN)
+    entradas = _recolectar(plugin.dir, plugin.carpeta)
 
-    for origen, destino_rel in PAQUETES_VENDORIZADOS:
+    for origen, destino_rel in plugin.paquetes_vendorizados:
         if not origen.is_dir():
             raise ErrorDespliegue(
                 f"El paquete a vendorizar no existe: {origen}\n"
-                "Revisa PAQUETES_VENDORIZADOS en desplegar.py."
+                f"Revisa paquetes_vendorizados de '{plugin.carpeta}' en desplegar.py."
             )
-        entradas += _recolectar(origen, f"{NOMBRE_PLUGIN}/{destino_rel}")
+        entradas += _recolectar(origen, f"{plugin.carpeta}/{destino_rel}")
 
     entradas.sort(key=lambda par: par[1])
 
@@ -173,7 +223,7 @@ def construir_zip() -> tuple[bytes, list[str]]:
     return buffer.getvalue(), [arcname for _, arcname in entradas]
 
 
-def verificar_zip(contenido: bytes, version_esperada: str) -> None:
+def verificar_zip(plugin: Plugin, contenido: bytes, version_esperada: str) -> None:
     """Falla ruidosamente si el paquete quedo incompleto o inconsistente."""
     with zipfile.ZipFile(io.BytesIO(contenido)) as z:
         nombres = z.namelist()
@@ -181,7 +231,7 @@ def verificar_zip(contenido: bytes, version_esperada: str) -> None:
         if not nombres:
             raise ErrorDespliegue("El zip quedo vacio.")
 
-        fuera = [n for n in nombres if not n.startswith(f"{NOMBRE_PLUGIN}/")]
+        fuera = [n for n in nombres if not n.startswith(f"{plugin.carpeta}/")]
         if fuera:
             raise ErrorDespliegue(
                 "Hay archivos fuera de la carpeta del plugin; QGIS no los va a "
@@ -189,9 +239,9 @@ def verificar_zip(contenido: bytes, version_esperada: str) -> None:
             )
 
         faltantes = [
-            f"{NOMBRE_PLUGIN}/{req}"
-            for req in ARCHIVOS_REQUERIDOS
-            if f"{NOMBRE_PLUGIN}/{req}" not in nombres
+            f"{plugin.carpeta}/{req}"
+            for req in plugin.archivos_requeridos
+            if f"{plugin.carpeta}/{req}" not in nombres
         ]
         if faltantes:
             raise ErrorDespliegue(f"El paquete quedo incompleto, faltan: {faltantes}")
@@ -214,8 +264,8 @@ def verificar_zip(contenido: bytes, version_esperada: str) -> None:
                 f"Estos directorios tienen .py pero no __init__.py: {sin_init}"
             )
 
-        for _, destino_rel in PAQUETES_VENDORIZADOS:
-            prefijo = f"{NOMBRE_PLUGIN}/{destino_rel}"
+        for _, destino_rel in plugin.paquetes_vendorizados:
+            prefijo = f"{plugin.carpeta}/{destino_rel}"
             if f"{prefijo}/__init__.py" not in nombres:
                 raise ErrorDespliegue(
                     f"El paquete vendorizado '{destino_rel}' no llego al zip o no "
@@ -226,7 +276,7 @@ def verificar_zip(contenido: bytes, version_esperada: str) -> None:
         # que anuncia el XML. Si no, QGIS ofrece la actualizacion, la instala, y
         # al volver a comparar sigue viendo una version vieja: la ofrece para
         # siempre.
-        crudo = z.read(f"{NOMBRE_PLUGIN}/metadata.txt").decode("utf-8")
+        crudo = z.read(f"{plugin.carpeta}/metadata.txt").decode("utf-8")
         en_zip = next(
             (l.split("=", 1)[1].strip() for l in crudo.splitlines()
              if l.strip().startswith("version=")),
@@ -243,54 +293,81 @@ def verificar_zip(contenido: bytes, version_esperada: str) -> None:
 
 # ── plugins.xml ───────────────────────────────────────────────────────────────
 
-def _cargar_xml() -> tuple[ET.ElementTree, ET.Element]:
+def _cargar_xml() -> ET.ElementTree:
     if not PLUGINS_XML.is_file():
         raise ErrorDespliegue(
             f"No se encontro plugins.xml en {PLUGINS_XML}. Es el archivo que "
             "consulta QGIS para saber si hay version nueva."
         )
     try:
-        arbol = ET.parse(PLUGINS_XML)
+        return ET.parse(PLUGINS_XML)
     except ET.ParseError as exc:
         raise ErrorDespliegue(f"plugins.xml esta mal formado: {exc}") from exc
 
-    plugin = arbol.getroot().find("pyqgis_plugin")
-    if plugin is None:
-        raise ErrorDespliegue("plugins.xml no contiene ningun <pyqgis_plugin>.")
-    return arbol, plugin
+
+def _buscar_entrada(arbol: ET.ElementTree, plugin: Plugin) -> ET.Element | None:
+    """
+    Ubica la entrada <pyqgis_plugin> de este plugin por su download_url (el
+    unico dato que identifica sin ambiguedad a que carpeta/zip corresponde),
+    no por el atributo name= (ese es el nombre visible y puede repetirse o
+    cambiar). Devuelve None si el plugin todavia no tiene entrada.
+    """
+    sufijo = f"/{plugin.zip_destino.relative_to(RAIZ).as_posix()}"
+    for elemento in arbol.getroot().findall("pyqgis_plugin"):
+        url_el = elemento.find("download_url")
+        url = (url_el.text or "").strip() if url_el is not None else ""
+        if urlsplit(url).path.endswith(sufijo):
+            return elemento
+    return None
 
 
-def estado_xml() -> tuple[str, str]:
+def estado_xml(plugin: Plugin) -> tuple[str, str]:
     """
-    Devuelve (version anunciada hoy, download_url) validando de entrada que la
-    URL apunte a donde se va a escribir el zip. Se controla antes de empaquetar
-    para no dejar un zip nuevo publicado bajo una URL que no lo encuentra.
+    Devuelve (version anunciada hoy, download_url). Si el plugin todavia no
+    tiene entrada en plugins.xml, devuelve ("", "") sin fallar: la entrada se
+    crea en actualizar_plugins_xml().
     """
-    _, plugin = _cargar_xml()
-    elemento = plugin.find("version")
+    arbol = _cargar_xml()
+    entrada = _buscar_entrada(arbol, plugin)
+    if entrada is None:
+        return "", ""
+    elemento = entrada.find("version")
     version = (elemento.text or "").strip() if elemento is not None else ""
-    return version, verificar_download_url(plugin)
+    url_el = entrada.find("download_url")
+    url = (url_el.text or "").strip() if url_el is not None else ""
+    return version, url
 
 
-def actualizar_plugins_xml(datos: dict[str, str]) -> str:
+def actualizar_plugins_xml(plugin: Plugin, datos: dict[str, str]) -> str:
     """
-    Reescribe plugins.xml derivando todo de metadata.txt y devuelve el
-    download_url ya validado contra la ruta del zip.
+    Reescribe (o crea) la entrada <pyqgis_plugin> de este plugin derivando todo
+    de metadata.txt, y devuelve el download_url ya validado contra la ruta del
+    zip. Las entradas de los demas plugins del repo quedan intactas.
     """
-    arbol, plugin = _cargar_xml()
+    arbol = _cargar_xml()
+    entrada = _buscar_entrada(arbol, plugin)
     cambios: list[str] = []
 
+    if entrada is None:
+        entrada = ET.SubElement(arbol.getroot(), "pyqgis_plugin")
+        zip_rel = plugin.zip_destino.relative_to(RAIZ).as_posix()
+        ET.SubElement(entrada, "download_url").text = f"{RAW_REPO}/{zip_rel}"
+        ET.SubElement(entrada, "homepage").text = HOMEPAGE_REPO
+        ET.SubElement(entrada, "author_name").text = ""
+        ET.SubElement(entrada, "experimental").text = "True"
+        cambios.append(f"entrada nueva para '{plugin.carpeta}'")
+
     def poner_atributo(nombre: str, valor: str) -> None:
-        if valor and plugin.get(nombre) != valor:
-            cambios.append(f"{nombre}= : {plugin.get(nombre)!r} -> {valor!r}")
-            plugin.set(nombre, valor)
+        if valor and entrada.get(nombre) != valor:
+            cambios.append(f"{nombre}= : {entrada.get(nombre)!r} -> {valor!r}")
+            entrada.set(nombre, valor)
 
     def poner_elemento(etiqueta: str, valor: str) -> None:
         if not valor:
             return
-        elemento = plugin.find(etiqueta)
+        elemento = entrada.find(etiqueta)
         if elemento is None:
-            elemento = ET.SubElement(plugin, etiqueta)
+            elemento = ET.SubElement(entrada, etiqueta)
         actual = (elemento.text or "").strip()
         if actual != valor:
             cambios.append(f"<{etiqueta}> : {actual!r} -> {valor!r}")
@@ -309,7 +386,7 @@ def actualizar_plugins_xml(datos: dict[str, str]) -> str:
     poner_elemento("author_name", datos["author"])
     poner_elemento("experimental", datos["experimental"])
 
-    url = verificar_download_url(plugin)
+    url = _verificar_download_url(plugin, entrada)
 
     ET.indent(arbol, space="  ")
     texto = ET.tostring(arbol.getroot(), encoding="unicode")
@@ -323,78 +400,78 @@ def actualizar_plugins_xml(datos: dict[str, str]) -> str:
     return url
 
 
-def verificar_download_url(plugin: ET.Element) -> str:
-    """Controla que el <download_url> apunte al zip que publica este script."""
-    elemento = plugin.find("download_url")
+def _verificar_download_url(plugin: Plugin, entrada: ET.Element) -> str:
+    """Controla que el <download_url> de esta entrada apunte al zip de este plugin."""
+    elemento = entrada.find("download_url")
     url = (elemento.text or "").strip() if elemento is not None else ""
     if not url:
-        raise ErrorDespliegue("plugins.xml no declara <download_url>.")
+        raise ErrorDespliegue(f"La entrada de '{plugin.carpeta}' no declara <download_url>.")
 
-    esperado = ZIP_DESTINO.relative_to(RAIZ).as_posix()
+    esperado = plugin.zip_destino.relative_to(RAIZ).as_posix()
     if not urlsplit(url).path.endswith(f"/{esperado}"):
         raise ErrorDespliegue(
             "El <download_url> no apunta al zip que escribe este script; los "
             "usuarios bajarian un archivo que no existe.\n"
             f"  download_url : {url}\n"
             f"  zip publicado: {esperado}\n"
-            "Corregi el download_url en plugins.xml, o ZIP_DESTINO en desplegar.py."
+            "Corregi el download_url en plugins.xml, o la carpeta del plugin en desplegar.py."
         )
     return url
 
 
 # ── Lanzamiento ───────────────────────────────────────────────────────────────
 
-def lanzamiento(forzar: bool) -> int:
-    datos = leer_metadata()
+def lanzamiento(plugin: Plugin, forzar: bool) -> int:
+    datos = leer_metadata(plugin)
     version = datos["version"]
 
-    info(f"Publicando {datos['name'] or NOMBRE_PLUGIN} {version}")
+    info(f"Publicando {datos['name'] or plugin.carpeta} {version}")
 
     info("\n[1/4] Verificando plugins.xml ...")
-    anterior, _ = estado_xml()              # leer antes de tocar el XML
-    ok(f"version anunciada hoy: {anterior or '(ninguna)'}")
+    anterior, _ = estado_xml(plugin)              # leer antes de tocar el XML
+    ok(f"version anunciada hoy: {anterior or '(ninguna, entrada nueva)'}")
 
     info("\n[2/4] Empaquetando ...")
-    contenido, arcnames = construir_zip()
-    verificar_zip(contenido, version)
+    contenido, arcnames = construir_zip(plugin)
+    verificar_zip(plugin, contenido, version)
 
-    identico = ZIP_DESTINO.is_file() and ZIP_DESTINO.read_bytes() == contenido
+    identico = plugin.zip_destino.is_file() and plugin.zip_destino.read_bytes() == contenido
 
-    if anterior == version and not identico and not forzar:
+    if anterior == version and anterior != "" and not identico and not forzar:
         raise ErrorDespliegue(
             f"El contenido del plugin cambio pero la version sigue en {version}.\n"
             "QGIS compara solo el numero de version: si lo publicas asi, nadie\n"
             "recibe la actualizacion y no aparece ningun error.\n"
-            f"  - Subi 'version=' en {METADATA.relative_to(RAIZ)}, o\n"
+            f"  - Subi 'version=' en {plugin.metadata_path.relative_to(RAIZ)}, o\n"
             "  - volve a correr con --forzar si estas reparando este mismo release."
         )
 
     if identico and anterior == version:
         aviso("El zip publicado ya es identico y la version no cambio: nada que publicar.")
 
-    info(f"\n[3/4] Escribiendo {ZIP_DESTINO.relative_to(RAIZ)} ...")
-    ZIP_DESTINO.parent.mkdir(parents=True, exist_ok=True)
-    ZIP_DESTINO.write_bytes(contenido)
+    info(f"\n[3/4] Escribiendo {plugin.zip_destino.relative_to(RAIZ)} ...")
+    plugin.zip_destino.parent.mkdir(parents=True, exist_ok=True)
+    plugin.zip_destino.write_bytes(contenido)
     ok(f"{len(contenido):,} bytes (nombre fijo, sin numero de version)")
 
     info("\n[4/4] Actualizando plugins.xml desde metadata.txt ...")
-    url = actualizar_plugins_xml(datos)
+    url = actualizar_plugins_xml(plugin, datos)
     ok(f"download_url verificado: {url}")
 
-    if anterior == version and forzar and not identico:
+    if anterior == version and anterior != "" and forzar and not identico:
         aviso(
             f"Republicando {version} sin cambiar el numero: los usuarios que ya "
             "tengan esa version instalada no van a recibir esto."
         )
 
-    rel = ZIP_DESTINO.relative_to(RAIZ).as_posix()
+    rel = plugin.zip_destino.relative_to(RAIZ).as_posix()
     info(
         "\n"
         "=== Falta subirlo al remoto ===\n"
         "QGIS baja del repositorio remoto, no de tu disco. Hasta que no hagas "
         "push, los usuarios siguen viendo la version anterior:\n\n"
-        f"    git add {rel} plugins.xml {METADATA.relative_to(RAIZ).as_posix()}\n"
-        f'    git commit -m "Lanzamiento {version}"\n'
+        f"    git add {rel} plugins.xml {plugin.metadata_path.relative_to(RAIZ).as_posix()}\n"
+        f'    git commit -m "Lanzamiento {plugin.carpeta} {version}"\n'
         "    git push\n"
     )
     return 0
@@ -412,12 +489,12 @@ def dir_plugins_qgis(perfil: str) -> Path:
     return Path.home() / ".local" / "share" / "QGIS" / "QGIS3" / "profiles" / perfil / "python" / "plugins"
 
 
-def instalar(perfil: str) -> int:
-    info(f"Instalando en el perfil '{perfil}'")
+def instalar(plugin: Plugin, perfil: str) -> int:
+    info(f"Instalando '{plugin.carpeta}' en el perfil '{perfil}'")
 
-    datos = leer_metadata()
-    contenido, arcnames = construir_zip()
-    verificar_zip(contenido, datos["version"])
+    datos = leer_metadata(plugin)
+    contenido, arcnames = construir_zip(plugin)
+    verificar_zip(plugin, contenido, datos["version"])
 
     destino_base = dir_plugins_qgis(perfil)
 
@@ -437,7 +514,7 @@ def instalar(perfil: str) -> int:
         if largo >= AVISO_RUTA_WINDOWS:
             aviso(f"La ruta mas larga queda en {largo} caracteres, cerca del limite de {LIMITE_RUTA_WINDOWS}.")
 
-    destino = destino_base / NOMBRE_PLUGIN
+    destino = destino_base / plugin.carpeta
     destino_base.mkdir(parents=True, exist_ok=True)
     if destino.exists():
         shutil.rmtree(destino)
@@ -457,14 +534,20 @@ def instalar(perfil: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Empaquetado, publicacion e instalacion del plugin Automatizacion Zona 8.",
+        description="Empaquetado, publicacion e instalacion de los plugins de este repo.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "La version se edita SOLO en metadata.txt; plugins.xml se deriva de ahi.\n"
+            f"Plugins disponibles: {', '.join(sorted(PLUGINS))}\n\n"
             "Ejemplos:\n"
-            "  python desplegar.py --lanzamiento\n"
-            "  python desplegar.py --instalar\n"
+            "  python desplegar.py --plugin Plugin_Automatizacion_Zona8 --lanzamiento\n"
+            "  python desplegar.py --plugin registrar_problema_sur --lanzamiento\n"
+            "  python desplegar.py --plugin registrar_problema_sur --instalar\n"
         ),
+    )
+    parser.add_argument(
+        "--plugin", choices=sorted(PLUGINS), default=None,
+        help="carpeta del plugin sobre el que actuar (obligatorio)",
     )
     parser.add_argument(
         "--lanzamiento", action="store_true",
@@ -488,12 +571,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("elegi una accion: --lanzamiento o --instalar")
 
     try:
+        plugin = _elegir_plugin(args.plugin)
         if args.lanzamiento:
-            codigo = lanzamiento(args.forzar)
+            codigo = lanzamiento(plugin, args.forzar)
             if codigo:
                 return codigo
         if args.instalar:
-            return instalar(args.perfil)
+            return instalar(plugin, args.perfil)
     except ErrorDespliegue as exc:
         print(f"\n[ERROR] {exc}", file=sys.stderr)
         return 1

@@ -10,4 +10,14 @@
     <author_name>DICA - Grupo TAU</author_name>
     <experimental>False</experimental>
   </pyqgis_plugin>
+  <pyqgis_plugin version="0.1.0" name="Registrar Problema Sur">
+    <download_url>https://raw.githubusercontent.com/Grupo-TAU/Automatizacion_Zona8/main/Lanzamientos/registrar_problema_sur.zip</download_url>
+    <homepage>https://github.com/Grupo-TAU/Automatizacion_Zona8</homepage>
+    <author_name>DICA - Grupo TAU</author_name>
+    <experimental>True</experimental>
+    <version>0.1.0</version>
+    <qgis_minimum_version>3.28</qgis_minimum_version>
+    <qgis_maximum_version>4.99</qgis_maximum_version>
+    <description>Registro de Problemas (Zona 8 - Sur) con captura de punto en el mapa y carga automatica desde PDF</description>
+  </pyqgis_plugin>
 </plugins>
