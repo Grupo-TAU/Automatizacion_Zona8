@@ -2,8 +2,8 @@
 name=Registrar Problema Sur
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
-description=Registro de Problemas (Zona 8 - Sur) con captura de punto en el mapa y carga automatica desde PDF
-version=0.1.3
+description=Registro de Problemas (Zona 8 - Sur) con captura de punto en el mapa, carga automatica desde PDF y panel de conteo por categoria
+version=0.2.0
 author=DICA - Grupo TAU
 email=
 
@@ -14,7 +14,7 @@ repository=https://github.com/Grupo-TAU/Automatizacion_Zona8
 
 hasProcessingProvider=no
 
-tags=saneamiento,problemas,zona8,sur,inspecciones
+tags=saneamiento,problemas,zona8,sur,inspecciones,conteo
 
 homepage=
 category=Plugins
@@ -24,7 +24,14 @@ experimental=False
 deprecated=False
 server=False
 
-changelog=0.1.3 - Deja de publicarse como experimental: ya aparece en el Administrador de complementos sin activar 'mostrar experimentales'.
+changelog=0.2.0 - Nuevo panel 'Conteo de Problemas': tabla por categoria de Tipo cruzada con
+    fuera/dentro de zona, que se recalcula sola con cada cambio de la capa. La columna
+    Comparacion se llena corriendo la extraccion de un CSV o XLSX y queda congelada en el
+    proyecto con la fecha de la ultima corrida.
+    Corrige el nombre del campo de zona: la capa lo llama 'Dentro_Zona' (Si = dentro),
+    no 'fuera_zona', asi que las altas nunca lo estaban completando.
+    Los problemas con Etapa finalizada quedan fuera del conteo y se informan aparte.
+    0.1.3 - Deja de publicarse como experimental: ya aparece en el Administrador de complementos sin activar 'mostrar experimentales'.
     0.1.2 - Completa automaticamente el campo fuera_zona intersectando el punto con la capa Zona_delimitada.
     La capa de alta pasa a llamarse problemas_sur; se quita 'Copiar imagenes de OS' (no se usa en este proyecto).
     0.1.0 - Fork inicial desde registrar_os_plugin (Automatizaciones_Orden_Servicio).

@@ -24,7 +24,10 @@ CAPA_PADRONES = "padrones"
 CAMPO_PADRON = "padron"
 
 CAPA_ZONA = "Zona_delimitada"
-CAMPO_FUERA_ZONA = "fuera_zona"
+# El campo de la capa se llama "Dentro_Zona" y guarda "Si" cuando el punto cae
+# DENTRO: es la polaridad opuesta a la del clasificador geometrico de mas abajo,
+# que razona en terminos de "fuera". La conversion se hace al escribir.
+CAMPO_DENTRO_ZONA = "Dentro_Zona"
 
 CAMPOS_PASO1 = [
     ("N°_OS", QVariant.String),
@@ -140,14 +143,15 @@ def clasificar_fuera_zona(geom_punto):
     return construir_clasificador(capa, QgsProject.instance().crs())(geom_punto)
 
 
-def _valor_fuera_zona(capa, idx_campo, fuera):
-    """Adapta el bool al tipo real del campo en la capa (bool / texto / entero)."""
+def _valor_dentro_zona(capa, idx_campo, dentro):
+    """Adapta el bool al tipo real del campo en la capa (bool / texto / entero).
+    Recibe 'dentro', no 'fuera': el campo de la capa es Dentro_Zona."""
     tipo = capa.fields().at(idx_campo).type()
     if tipo == QVariant.Bool:
-        return fuera
+        return dentro
     if tipo in (QVariant.Int, QVariant.LongLong, QVariant.Double):
-        return int(fuera)
-    return "Si" if fuera else "No"
+        return int(dentro)
+    return "Si" if dentro else "No"
 
 
 def agregar_feature_os(datos, punto_xy, fuera_zona=None):
@@ -169,13 +173,14 @@ def agregar_feature_os(datos, punto_xy, fuera_zona=None):
 
     indices_seteados = set()
 
-    # "fuera_zona" no se pide en el formulario: se resuelve intersectando el
+    # "Dentro_Zona" no se pide en el formulario: se resuelve intersectando el
     # punto con CAPA_ZONA. Si la capa no está cargada, el campo queda NULL.
+    # El clasificador devuelve "fuera", el campo guarda "dentro": se invierte acá.
     fuera = clasificar_fuera_zona(geom) if fuera_zona is None else fuera_zona(geom)
-    idx_fz = capa.fields().lookupField(CAMPO_FUERA_ZONA)
-    if idx_fz >= 0 and fuera is not None:
-        feat.setAttribute(idx_fz, _valor_fuera_zona(capa, idx_fz, fuera))
-        indices_seteados.add(idx_fz)
+    idx_dz = capa.fields().lookupField(CAMPO_DENTRO_ZONA)
+    if idx_dz >= 0 and fuera is not None:
+        feat.setAttribute(idx_dz, _valor_dentro_zona(capa, idx_dz, not fuera))
+        indices_seteados.add(idx_dz)
 
     for nombre_campo, tipo in CAMPOS_PASO1:
         idx = capa.fields().indexOf(nombre_campo)
