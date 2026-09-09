@@ -1,18 +1,22 @@
 [general]
 name=Automatizacion Zona 8
-version=0.2.5
-qgisMinimumVersion=3.16
+version=0.3.0
+qgisMinimumVersion=3.44
 qgisMaximumVersion=4.99
-description=Automatizacion de flujos de actualizacion de capas para Zona 8.
+description=Automatizacion de flujos de actualizacion e intercambio de capas para Zona 8.
 author=DICA - Grupo TAU
 email=
-about=Plugin para mantener sincronizada la capa problemas_maestra con el servicio
-      WFS V_RE_PROBLEMAS_ABIERTOS_SANEA: incorpora los problemas nuevos que caen
-      dentro de la zona delimitada, evitando duplicados, y elimina los que ya
-      fueron finalizados.
+about=Provider de Processing con los flujos automatizados de Zona 8.
+      1) Actualizar Obstrucciones: mantiene sincronizada la capa problemas_maestra
+      con el servicio WFS V_RE_PROBLEMAS_ABIERTOS_SANEA, incorpora los problemas
+      nuevos que caen dentro de la zona delimitada, evitando duplicados, y elimina
+      los que ya fueron finalizados.
+      2) Intercambio IM: exporta a XLSX las filas abiertas sin permiso para
+      enviarlas a la Intendencia y mergea de vuelta la columna Permisos_UCCRIU que
+      ellos completan, con validacion de claves y reporte por fila.
 tracker=
 repository=
-tags=reclamos, zona8, saneamiento, wfs
+tags=reclamos, zona8, saneamiento, wfs, xlsx, intendencia
 homepage=
 category=Vector
 icon=

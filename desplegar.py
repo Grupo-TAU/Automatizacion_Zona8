@@ -72,17 +72,23 @@ class Plugin:
 
 # Paquetes propios que viven fuera de la carpeta del plugin y tienen que viajar
 # adentro del zip: QGIS copia unicamente la carpeta del plugin al perfil del
-# usuario, cualquier cosa que quede afuera no llega. Hoy ningun plugin de este
-# repo depende de uno; si aparece un paquete compartido, se agrega a la entrada
-# correspondiente en PLUGINS y verificar_zip() controla que llegue completo.
+# usuario, cualquier cosa que quede afuera no llega. verificar_zip() controla que
+# lleguen completos.
+#
+# intercambio_im es el nucleo puro del intercambio con la IM (normalizacion,
+# validaciones, diff y XLSX, sin nada de QGIS). Vive en la raiz para poder usarse
+# desde un script suelto y para que otro plugin del repo lo pueda vendorizar sin
+# copiar el codigo.
 PLUGINS: dict[str, Plugin] = {
     "Plugin_Automatizacion_Zona8": Plugin(
         carpeta="Plugin_Automatizacion_Zona8",
         archivos_requeridos=("__init__.py", "metadata.txt", "plugin.py", "provider.py"),
+        paquetes_vendorizados=((RAIZ / "intercambio_im", "intercambio_im"),),
     ),
     "registrar_problema_sur": Plugin(
         carpeta="registrar_problema_sur",
         archivos_requeridos=("__init__.py", "metadata.txt"),
+        paquetes_vendorizados=((RAIZ / "intercambio_im", "intercambio_im"),),
     ),
 }
 
