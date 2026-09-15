@@ -19,7 +19,7 @@ function generarTodosLosLinks() {
       if (resultados.hasNext()) {
         const carpeta = resultados.next();
         const url = 'https://drive.google.com/drive/folders/' + carpeta.getId();
-        celdaLink.setFormula('=HYPERLINK("' + url + '","' + nProblema + '")');
+        celdaLink.setFormula('=HYPERLINK("' + url + '")');
       } else {
         celdaLink.setValue('No encontrada');
       }
