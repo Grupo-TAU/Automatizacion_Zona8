@@ -16,6 +16,7 @@ from .capa_utils import (
     RAIZ_IMAGENES, buscar_punto_padron, agregar_feature_os, obtener_capa,
     construir_clasificador, existe_n_problema, CAPA_PADRONES, CAPA_ZONA,
 )
+from .conteo import es_tipo_excluido
 from .pdf_parser import (
     parsear_pdf_os, parsear_pdf_itinerario, pdfplumber_disponible, instalar_pdfplumber,
 )
@@ -371,6 +372,13 @@ class DialogoRegistroOS(QDialog):
             errores.append(
                 f"• Ya existe un problema con N° {n_problema} en la capa. "
                 "Revisá antes de cargarlo de nuevo."
+            )
+
+        tipo = self.f_tipo.text().strip()
+        if tipo and es_tipo_excluido(tipo):
+            errores.append(
+                f"• Tipo '{tipo}' es de Limpieza: ese tipo de problema no se "
+                "carga en esta capa, se sigue por otro circuito."
             )
 
         if errores:

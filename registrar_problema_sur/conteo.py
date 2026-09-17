@@ -17,7 +17,7 @@ la version de linea de comandos de este mismo conteo. Si se agrega o se cambia
 una categoria hay que tocar los dos archivos o los numeros van a divergir.
 """
 
-from collections import Counter
+from collections import Counter, defaultdict
 
 from .intercambio_im import tabla
 
@@ -30,11 +30,15 @@ CAMPO_ETAPA = "Etapa"
 CAMPO_PROBLEMA = "Problema"
 CAMPO_N_PROBLEMA = "N_Problema"
 
-# Los problemas finalizados no se cuentan: el panel muestra lo que queda por
-# hacer, no el historico. Se compara contra el PREFIJO de la Etapa normalizada,
-# asi que "finalizad" toma Finalizada / Finalizado / Finalizadas, pero no
-# convierte un hipotetico "No finalizada" en un descarte.
-ETAPAS_DESCARTADAS = ("finalizad",)
+# Los problemas finalizados (o que no corresponden) no se cuentan: el panel
+# muestra lo que queda por hacer, no el historico. Se compara contra el
+# PREFIJO de la Etapa normalizada, asi que "finalizad" toma Finalizada /
+# Finalizado / Finalizadas, pero no convierte un hipotetico "No finalizada" en
+# un descarte. Se listan las dos variantes de "No_Corresponde" y "Fin_Obra"
+# (con guion bajo y con espacio) porque normalizar() no toca los guiones bajos.
+# "Fin_Obra" reemplaza a "Finalizada" en el sistema; se deja "finalizad" igual
+# para no perder el descarte en los registros viejos que todavia la tengan.
+ETAPAS_DESCARTADAS = ("finalizad", "fin_obra", "fin obra", "no_corresponde", "no corresponde")
 
 
 # Categorias en ORDEN DE PRIORIDAD: gana la primera que coincide y el problema
@@ -51,18 +55,6 @@ CATEGORIAS = [
     ("Tapas", (
         "Boca de Tormenta sin Tapa",
         "Registro sin Tapa",
-    )),
-    ("Limpieza", (
-        "Alcantarilla Obstruida",
-        "Boca de Tormenta Obstruida",
-        "Cañada Obstruida",
-        "Colector Interno Obstruido",
-        "Colector Obstruido",
-        "Colector Sucio",
-        "Conexion Obstruida",
-        "Conexion Sucia",
-        "Conexión de Boca de Tormenta Obstruida",
-        "Registro Sucio",
     )),
     ("Obras", (
         "Alcantarilla Rota",
@@ -85,6 +77,23 @@ CATEGORIA_RESTO = "Otros"
 # fila. Una planilla y una capa que difieren suelen diferir justo aca.
 CATEGORIA_SIN_DATO = "(sin dato)"
 
+# Los problemas de Limpieza los sigue otro circuito aparte de este panel: no
+# se cuentan ni en la capa ni en la planilla, igual que un finalizado (ni
+# siquiera van a "Otros"). Mismo criterio de matcheo que CATEGORIAS: subcadena
+# del Tipo normalizado. Es la ex-categoria "Limpieza".
+TIPOS_EXCLUIDOS = (
+    "Alcantarilla Obstruida",
+    "Boca de Tormenta Obstruida",
+    "Cañada Obstruida",
+    "Colector Interno Obstruido",
+    "Colector Obstruido",
+    "Colector Sucio",
+    "Conexion Obstruida",
+    "Conexion Sucia",
+    "Conexión de Boca de Tormenta Obstruida",
+    "Registro Sucio",
+)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CLASIFICACION (la unica fuente de verdad, compartida por las dos fuentes)
@@ -101,6 +110,7 @@ _CATEGORIAS_NORM = [
     (nombre, tuple(normalizar(p) for p in patrones))
     for nombre, patrones in CATEGORIAS
 ]
+_TIPOS_EXCLUIDOS_NORM = tuple(normalizar(p) for p in TIPOS_EXCLUIDOS)
 
 
 def clasificar(tipo):
@@ -117,6 +127,19 @@ def es_descartable(etapa):
     """True si la Etapa indica un problema que no hay que contar."""
     t = normalizar(etapa)
     return t.startswith(ETAPAS_DESCARTADAS)
+
+
+def es_tipo_excluido(tipo):
+    """True si el Tipo es de Limpieza (TIPOS_EXCLUIDOS): no se cuenta en este
+    panel, ni en la capa ni en la planilla."""
+    t = normalizar(tipo)
+    return any(p in t for p in _TIPOS_EXCLUIDOS_NORM)
+
+
+def ordenar_ids(ids):
+    """Ordena N° de problema como numero cuando se puede, para que "10" no
+    quede antes que "2"."""
+    return sorted(ids, key=_clave_orden_id)
 
 
 def patrones_categoria(nombre):
@@ -154,42 +177,73 @@ def leer_columna(ruta, campo=CAMPO_TIPO, hoja=None):
     return tabla.leer_columna(ruta, campo, hoja)
 
 
-def contar_planilla(ruta, campo=CAMPO_TIPO, hoja=None):
+class ConteoPlanilla:
     """
-    categoria -> cantidad, leyendo la columna Tipo de un CSV o XLSX.
+    Resultado de contar_planilla(): conteo por categoria (Counter), mas lo que
+    quedo afuera y los N_Problema de cada categoria (para poder listarlos al
+    hacer clic en una celda del panel).
+    """
 
-    Si la planilla trae la columna Etapa, los finalizados se descartan igual que
-    en la capa. Si no la trae (es lo que pasa hoy: la exportacion del sistema
-    solo tiene Problema, Tipo, Ubicacion y Fecha), se cuenta todo, asumiendo que
-    el sistema ya exporto unicamente los problemas abiertos.
+    def __init__(self):
+        self.conteo = Counter()
+        self.descartados = 0                  # Etapa finalizada / no corresponde
+        self.excluidos = 0                    # Tipo de Limpieza (TIPOS_EXCLUIDOS)
+        self.ids_por_categoria = defaultdict(list)
+
+
+def contar_planilla(ruta, campo=CAMPO_TIPO, campo_id=CAMPO_PROBLEMA, hoja=None):
     """
-    conteo = Counter()
-    descartados = 0
-    for fila in leer_filas(ruta, campo, (CAMPO_ETAPA,), hoja):
+    Cuenta la columna Tipo de un CSV o XLSX por categoria.
+
+    Si la planilla trae la columna Etapa, los finalizados/no corresponde se
+    descartan igual que en la capa. Los Tipo de Limpieza (TIPOS_EXCLUIDOS) se
+    excluyen igual que en la capa, tambien. Si la planilla no trae Etapa (es lo
+    que pasa hoy: la exportacion del sistema solo tiene Problema, Tipo,
+    Ubicacion y Fecha), no se descarta nada por ese lado, asumiendo que el
+    sistema ya exporto unicamente los problemas abiertos.
+    """
+    resultado = ConteoPlanilla()
+    for fila in leer_filas(ruta, campo, (CAMPO_ETAPA, campo_id), hoja):
         if es_descartable(fila.get(CAMPO_ETAPA)):
-            descartados += 1
+            resultado.descartados += 1
             continue
-        conteo[clasificar(fila[campo])] += 1
-    return conteo, descartados
+        if es_tipo_excluido(fila[campo]):
+            resultado.excluidos += 1
+            continue
+        categoria = clasificar(fila[campo])
+        resultado.conteo[categoria] += 1
+        id_problema = str(fila.get(campo_id) or "").strip()
+        if id_problema:
+            resultado.ids_por_categoria[categoria].append(id_problema)
+    return resultado
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # COMPARACION DE IDs: PLANILLA vs CAPA
 # ─────────────────────────────────────────────────────────────────────────────
-def leer_ids_planilla(ruta, campo=CAMPO_PROBLEMA, hoja=None):
-    """Los N° de problema de la planilla, como texto y sin vacios."""
-    return [t for t in (str(v).strip() for v in leer_columna(ruta, campo, hoja)) if t]
+def leer_ids_planilla(ruta, campo=CAMPO_PROBLEMA, campo_tipo=CAMPO_TIPO, hoja=None):
+    """Los N° de problema de la planilla, como texto y sin vacios. Excluye los
+    Tipo de Limpieza (TIPOS_EXCLUIDOS): no se comparan en este panel."""
+    ids = []
+    for fila in leer_filas(ruta, campo, (campo_tipo,), hoja):
+        if es_tipo_excluido(fila.get(campo_tipo)):
+            continue
+        texto = str(fila[campo]).strip()
+        if texto:
+            ids.append(texto)
+    return ids
 
 
-def ids_capa(capa, campo=CAMPO_N_PROBLEMA, campo_etapa=None):
+def ids_capa(capa, campo=CAMPO_N_PROBLEMA, campo_etapa=None, campo_tipo=CAMPO_TIPO):
     """
-    Los N° de problema de la capa, como texto y sin vacios.
+    Los N° de problema de la capa, como texto y sin vacios. Excluye los Tipo de
+    Limpieza (TIPOS_EXCLUIDOS) siempre; pasar campo_tipo=None para desactivarlo.
 
-    Sin campo_etapa recorre toda la capa: un problema finalizado que sigue en
-    la capa ya esta cargado igual, asi que cuenta como "presente". Pasando
-    campo_etapa (tipicamente CAMPO_ETAPA) descarta los finalizados: es el
-    universo a usar cuando del otro lado hay una planilla que, como la del
-    sistema, solo trae problemas abiertos.
+    Sin campo_etapa recorre el resto de la capa: un problema finalizado que
+    sigue en la capa ya esta cargado igual, asi que cuenta como "presente".
+    Pasando campo_etapa (tipicamente CAMPO_ETAPA) descarta ademas los
+    finalizados/no corresponde: es el universo a usar cuando del otro lado hay
+    una planilla que, como la del sistema, solo trae problemas abiertos.
     """
     from qgis.core import QgsFeatureRequest
 
@@ -200,8 +254,9 @@ def ids_capa(capa, campo=CAMPO_N_PROBLEMA, campo_etapa=None):
             f"Campos: {', '.join(capa.fields().names())}"
         )
     idx_etapa = capa.fields().lookupField(campo_etapa) if campo_etapa else -1
+    idx_tipo = capa.fields().lookupField(campo_tipo) if campo_tipo else -1
 
-    atributos = [idx] + ([idx_etapa] if idx_etapa >= 0 else [])
+    atributos = [idx] + [i for i in (idx_etapa, idx_tipo) if i >= 0]
     solicitud = (
         QgsFeatureRequest()
         .setSubsetOfAttributes(atributos)
@@ -210,6 +265,8 @@ def ids_capa(capa, campo=CAMPO_N_PROBLEMA, campo_etapa=None):
     ids = []
     for feature in capa.getFeatures(solicitud):
         if idx_etapa >= 0 and es_descartable(feature[idx_etapa]):
+            continue
+        if idx_tipo >= 0 and es_tipo_excluido(feature[idx_tipo]):
             continue
         texto = str(feature[idx]).strip()
         if texto and texto.lower() != "null":
@@ -275,7 +332,13 @@ class ConteoCapa:
     total suma los tres, asi que si hay features sin Dentro_Zona la fila no
     cierra entre las dos primeras columnas: es a proposito, el panel lo avisa.
 
-    descartados cuenta los finalizados, que no entran en ningun Counter.
+    ids_fuera / ids_dentro / ids_total tienen, categoria por categoria, los
+    mismos N_Problema que arman esos numeros (para poder listarlos al hacer
+    clic en una celda del panel). Un feature sin N_Problema cuenta igual en el
+    Counter pero no deja rastro en estas listas.
+
+    descartados cuenta Etapa finalizada/no corresponde; excluidos cuenta Tipo
+    de Limpieza (TIPOS_EXCLUIDOS). Ninguno de los dos entra en ningun Counter.
     """
 
     def __init__(self):
@@ -283,15 +346,25 @@ class ConteoCapa:
         self.dentro = Counter()
         self.sin_clasificar = Counter()
         self.total = Counter()
-        self.descartados = 0   # finalizados que quedaron fuera del conteo
+        self.ids_fuera = defaultdict(list)
+        self.ids_dentro = defaultdict(list)
+        self.ids_total = defaultdict(list)
+        self.descartados = 0
+        self.excluidos = 0
 
-    def agregar(self, tipo, dentro):
+    def agregar(self, tipo, dentro, id_problema=""):
         categoria = clasificar(tipo)
         self.total[categoria] += 1
+        if id_problema:
+            self.ids_total[categoria].append(id_problema)
         if dentro is True:
             self.dentro[categoria] += 1
+            if id_problema:
+                self.ids_dentro[categoria].append(id_problema)
         elif dentro is False:
             self.fuera[categoria] += 1
+            if id_problema:
+                self.ids_fuera[categoria].append(id_problema)
         else:
             self.sin_clasificar[categoria] += 1
 
@@ -301,15 +374,17 @@ class ConteoCapa:
 
 
 def contar_capa(capa, campo_tipo=CAMPO_TIPO, campo_dentro_zona=CAMPO_DENTRO_ZONA,
-                campo_etapa=CAMPO_ETAPA):
+                campo_etapa=CAMPO_ETAPA, campo_id=CAMPO_N_PROBLEMA):
     """
     Recorre los features de la capa y los cuenta por categoria x zona.
 
     Respeta el filtro de la capa (subset string) porque usa getFeatures(): si la
     capa esta filtrada en el panel de capas, los numeros son los del filtro.
-    Los problemas con Etapa finalizada se descartan y se cuentan aparte en
-    ConteoCapa.descartados. Pide solo los atributos que usa y ninguna
-    geometria, que es lo que hace viable recalcular en cada edicion.
+    Los problemas con Etapa finalizada/no corresponde se descartan
+    (ConteoCapa.descartados) y los Tipo de Limpieza se excluyen
+    (ConteoCapa.excluidos); ninguno de los dos entra en ningun Counter. Pide
+    solo los atributos que usa y ninguna geometria, que es lo que hace viable
+    recalcular en cada edicion.
     """
     from qgis.core import QgsFeatureRequest
 
@@ -321,8 +396,9 @@ def contar_capa(capa, campo_tipo=CAMPO_TIPO, campo_dentro_zona=CAMPO_DENTRO_ZONA
         )
     idx_dz = capa.fields().lookupField(campo_dentro_zona)
     idx_etapa = capa.fields().lookupField(campo_etapa)
+    idx_id = capa.fields().lookupField(campo_id)
 
-    atributos = [idx_tipo] + [i for i in (idx_dz, idx_etapa) if i >= 0]
+    atributos = [idx_tipo] + [i for i in (idx_dz, idx_etapa, idx_id) if i >= 0]
     solicitud = (
         QgsFeatureRequest()
         .setSubsetOfAttributes(atributos)
@@ -331,11 +407,19 @@ def contar_capa(capa, campo_tipo=CAMPO_TIPO, campo_dentro_zona=CAMPO_DENTRO_ZONA
 
     conteo = ConteoCapa()
     for feature in capa.getFeatures(solicitud):
-        # Los finalizados no entran en ninguna columna: el panel muestra lo que
-        # queda por hacer. Si la capa no tiene el campo Etapa no se descarta nada.
+        # Los finalizados/no corresponde no entran en ninguna columna: el panel
+        # muestra lo que queda por hacer. Si la capa no tiene el campo Etapa no
+        # se descarta nada.
         if idx_etapa >= 0 and es_descartable(feature[idx_etapa]):
             conteo.descartados += 1
             continue
+        # Limpieza la sigue otro circuito aparte: tampoco entra en ninguna columna.
+        if es_tipo_excluido(feature[idx_tipo]):
+            conteo.excluidos += 1
+            continue
         dentro = interpretar_dentro_zona(feature[idx_dz]) if idx_dz >= 0 else None
-        conteo.agregar(feature[idx_tipo], dentro)
+        id_problema = str(feature[idx_id]).strip() if idx_id >= 0 else ""
+        if id_problema.lower() == "null":
+            id_problema = ""
+        conteo.agregar(feature[idx_tipo], dentro, id_problema)
     return conteo

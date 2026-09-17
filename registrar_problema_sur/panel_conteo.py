@@ -6,6 +6,9 @@ edicion de atributos, filtro del panel de capas). La cuarta, "Comparacion", es
 estatica: se llena a pedido corriendo la extraccion de una planilla y queda
 guardada en el proyecto junto con la fecha en que se corrio, para poder ver de
 un vistazo cuanto se movio la capa desde el ultimo cruce contra el sistema.
+
+Cada celda de la tabla es clickeable: muestra los N_Problema que arman ese
+numero (capa_utils.CAMPOS_PASO1 / conteo.CAMPO_N_PROBLEMA).
 """
 
 import json
@@ -31,16 +34,19 @@ from . import conteo as cnt
 # ─────────────────────────────────────────────────────────────────────────────
 # Va en el proyecto para que las 6 PCs vean la misma comparacion y la misma
 # fecha. El precio es que hay que guardar el proyecto: writeEntry lo marca como
-# modificado, y el panel lo avisa en pantalla.
+# modificado, y el panel lo avisa en pantalla. Todo en una sola clave JSON: es
+# mas facil de extender que una clave por campo.
 _SCOPE = "RegistrarProblemaSur"
-_CLAVE_CONTEO = "comparacion/conteo"
-_CLAVE_FECHA = "comparacion/fecha"
-_CLAVE_ARCHIVO = "comparacion/archivo"
-# "sin_cargar": IDs de la planilla que no estan en la capa (hay que cargarlos).
-# "sin_planilla": IDs abiertos de la capa que no estan en la planilla (el
-# sentido inverso: cosas que tenemos pero el sistema no tiene como abiertas).
-_CLAVE_IDS_SIN_CARGAR = "comparacion/ids_sin_cargar"
-_CLAVE_IDS_SIN_PLANILLA = "comparacion/ids_sin_planilla"
+_CLAVE_DATOS = "comparacion/datos"
+
+_DATOS_POR_DEFECTO = {
+    "conteo": {},
+    "fecha": "",
+    "archivo": "",
+    "ids_sin_cargar": [],
+    "ids_sin_planilla": [],
+    "ids_por_categoria": {},
+}
 
 # Coalescencia de los recalculos: una edicion masiva dispara decenas de señales
 # seguidas y no tiene sentido recorrer la capa en cada una.
@@ -48,37 +54,31 @@ _MS_REBOTE = 250
 
 
 def leer_comparacion():
-    """Devuelve (conteo, fecha, archivo, ids_sin_cargar, ids_sin_planilla).
-    conteo es {} y las listas de IDs son [] si no hay nada guardado."""
+    """Devuelve el dict de la ultima comparacion guardada en el proyecto (conteo,
+    fecha, archivo, ids_sin_cargar, ids_sin_planilla, ids_por_categoria), con
+    los valores por defecto (vacios) si todavia no se corrio ninguna."""
     proyecto = QgsProject.instance()
-    crudo, _ = proyecto.readEntry(_SCOPE, _CLAVE_CONTEO, "")
-    fecha, _ = proyecto.readEntry(_SCOPE, _CLAVE_FECHA, "")
-    archivo, _ = proyecto.readEntry(_SCOPE, _CLAVE_ARCHIVO, "")
-    crudo_sin_cargar, _ = proyecto.readEntry(_SCOPE, _CLAVE_IDS_SIN_CARGAR, "")
-    crudo_sin_planilla, _ = proyecto.readEntry(_SCOPE, _CLAVE_IDS_SIN_PLANILLA, "")
-
-    def _cargar(crudo_json):
-        try:
-            return json.loads(crudo_json) if crudo_json else []
-        except ValueError:
-            return []
-
+    crudo, _ = proyecto.readEntry(_SCOPE, _CLAVE_DATOS, "")
     try:
         guardado = json.loads(crudo) if crudo else {}
     except ValueError:
         guardado = {}
-    return guardado, fecha, archivo, _cargar(crudo_sin_cargar), _cargar(crudo_sin_planilla)
+    return {**_DATOS_POR_DEFECTO, **guardado}
 
 
-def guardar_comparacion(conteo, archivo, ids_sin_cargar=(), ids_sin_planilla=()):
+def guardar_comparacion(conteo, archivo, ids_sin_cargar=(), ids_sin_planilla=(), ids_por_categoria=None):
     """Congela el conteo de la planilla en el proyecto, con la fecha de ahora."""
     proyecto = QgsProject.instance()
     fecha = QDateTime.currentDateTime().toString("dd/MM/yyyy HH:mm")
-    proyecto.writeEntry(_SCOPE, _CLAVE_CONTEO, json.dumps(dict(conteo), ensure_ascii=False))
-    proyecto.writeEntry(_SCOPE, _CLAVE_FECHA, fecha)
-    proyecto.writeEntry(_SCOPE, _CLAVE_ARCHIVO, archivo)
-    proyecto.writeEntry(_SCOPE, _CLAVE_IDS_SIN_CARGAR, json.dumps(list(ids_sin_cargar), ensure_ascii=False))
-    proyecto.writeEntry(_SCOPE, _CLAVE_IDS_SIN_PLANILLA, json.dumps(list(ids_sin_planilla), ensure_ascii=False))
+    datos = {
+        "conteo": dict(conteo),
+        "fecha": fecha,
+        "archivo": archivo,
+        "ids_sin_cargar": list(ids_sin_cargar),
+        "ids_sin_planilla": list(ids_sin_planilla),
+        "ids_por_categoria": {k: list(v) for k, v in (ids_por_categoria or {}).items()},
+    }
+    proyecto.writeEntry(_SCOPE, _CLAVE_DATOS, json.dumps(datos, ensure_ascii=False))
     return fecha
 
 
@@ -115,6 +115,9 @@ class PanelConteo(QDockWidget):
 
         self._capa = None            # capa a la que estamos enganchados
         self._conexiones = []        # (senal, slot) para poder desconectar
+        self._resultado_capa = None  # ultimo ConteoCapa, para las celdas clickeables
+        self._categorias_tabla = []  # filas visibles actuales (sin el TOTAL)
+        self._ids_por_categoria = {}  # categoria -> [N_Problema...] de la planilla
         self._ids_sin_cargar = []    # planilla -> falta en la capa
         self._ids_sin_planilla = []  # capa (abiertos) -> falta en la planilla
         self._rebote = QTimer(self)
@@ -135,10 +138,13 @@ class PanelConteo(QDockWidget):
 
         self.tabla = QTableWidget(0, len(_COLUMNAS))
         self.tabla.setHorizontalHeaderLabels(_COLUMNAS)
+        self.tabla.setToolTip("Clic en una celda para ver los N° de problema que la componen.")
         self.tabla.verticalHeader().setDefaultSectionSize(24)
         self.tabla.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabla.setSelectionMode(QTableWidget.NoSelection)
         self.tabla.setAlternatingRowColors(True)
+        self.tabla.setCursor(Qt.PointingHandCursor)
+        self.tabla.cellClicked.connect(self._click_celda)
         cabecera = self.tabla.horizontalHeader()
         cabecera.setSectionResizeMode(QHeaderView.Stretch)
         self.tabla.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
@@ -195,8 +201,8 @@ class PanelConteo(QDockWidget):
         self.btn_sin_planilla = QPushButton("No están en la planilla")
         self.btn_sin_planilla.setToolTip(
             f"Números de '{cnt.CAMPO_N_PROBLEMA}' abiertos en la capa (Etapa "
-            f"distinta de finalizada) que no aparecen en '{cnt.CAMPO_PROBLEMA}' "
-            "de la planilla."
+            f"distinta de finalizada/no corresponde) que no aparecen en "
+            f"'{cnt.CAMPO_PROBLEMA}' de la planilla."
         )
         self.btn_sin_planilla.clicked.connect(self._mostrar_ids_sin_planilla)
         self.btn_sin_planilla.setEnabled(False)
@@ -253,31 +259,36 @@ class PanelConteo(QDockWidget):
 
     # ── Calculo y pintado ────────────────────────────────────────────────
     def refrescar(self):
-        comparacion, fecha, archivo, ids_sin_cargar, ids_sin_planilla = leer_comparacion()
+        datos = leer_comparacion()
+        comparacion = datos["conteo"]
 
         if self._capa is None:
             self._vaciar_tabla(f"La capa '{CAPA_OS}' no está cargada en el proyecto.")
-            self._pintar_comparacion(fecha, archivo, ids_sin_cargar, ids_sin_planilla)
+            self._pintar_comparacion(datos)
             return
 
         try:
             resultado = cnt.contar_capa(self._capa, cnt.CAMPO_TIPO, CAMPO_DENTRO_ZONA)
         except ValueError as exc:
             self._vaciar_tabla(str(exc))
-            self._pintar_comparacion(fecha, archivo, ids_sin_cargar, ids_sin_planilla)
+            self._pintar_comparacion(datos)
             return
 
         self._pintar_tabla(resultado, comparacion)
         self._pintar_estado(resultado)
-        self._pintar_comparacion(fecha, archivo, ids_sin_cargar, ids_sin_planilla)
+        self._pintar_comparacion(datos)
 
     def _vaciar_tabla(self, mensaje):
         self.tabla.setRowCount(0)
+        self._resultado_capa = None
+        self._categorias_tabla = []
         self.lbl_estado.setText(mensaje)
         self.lbl_estado.setStyleSheet(_ROJO)
 
     def _pintar_tabla(self, resultado, comparacion):
         categorias = cnt.categorias_visibles(resultado.total, comparacion)
+        self._resultado_capa = resultado
+        self._categorias_tabla = categorias
         filas = categorias + [_FILA_TOTAL]
         self.tabla.setRowCount(len(filas))
         self.tabla.setVerticalHeaderLabels(filas)
@@ -329,7 +340,9 @@ class PanelConteo(QDockWidget):
         partes = [f"Capa '{self._capa.name()}': {sum(resultado.total.values())} problemas abiertos."]
         estilo = _GRIS
         if resultado.descartados:
-            partes.append(f"Se descartaron {resultado.descartados} finalizados.")
+            partes.append(f"Se descartaron {resultado.descartados} finalizados/no corresponde.")
+        if resultado.excluidos:
+            partes.append(f"Se excluyeron {resultado.excluidos} de Limpieza (no se cuentan en este panel).")
         if resultado.n_sin_clasificar:
             # Fuera + Dentro no cierra contra Total cuando pasa esto, así que
             # conviene decirlo en vez de dejar que el usuario haga la resta.
@@ -344,7 +357,12 @@ class PanelConteo(QDockWidget):
         self.lbl_estado.setText(" ".join(partes))
         self.lbl_estado.setStyleSheet(estilo)
 
-    def _pintar_comparacion(self, fecha, archivo, ids_sin_cargar=(), ids_sin_planilla=()):
+    def _pintar_comparacion(self, datos):
+        fecha = datos["fecha"]
+        archivo = datos["archivo"]
+        ids_sin_cargar = datos["ids_sin_cargar"]
+        ids_sin_planilla = datos["ids_sin_planilla"]
+
         if not fecha:
             self.lbl_comparacion.setText(
                 "Comparación: sin datos. Corré la extracción desde un CSV o XLSX."
@@ -361,12 +379,45 @@ class PanelConteo(QDockWidget):
                 texto += " " + ", ".join(partes) + "."
             self.lbl_comparacion.setText(texto)
 
+        self._ids_por_categoria = datos["ids_por_categoria"]
         self._ids_sin_cargar = list(ids_sin_cargar)
         self._ids_sin_planilla = list(ids_sin_planilla)
         self.btn_sin_cargar.setText(f"Faltan cargar ({len(self._ids_sin_cargar)})")
         self.btn_sin_cargar.setEnabled(bool(self._ids_sin_cargar))
         self.btn_sin_planilla.setText(f"No están en la planilla ({len(self._ids_sin_planilla)})")
         self.btn_sin_planilla.setEnabled(bool(self._ids_sin_planilla))
+
+    # ── Celdas clickeables ────────────────────────────────────────────────
+    def _click_celda(self, fila, columna):
+        """Cada celda muestra los N_Problema que arman su numero. Silencioso
+        si la celda esta vacia: no tiene sentido abrir un dialogo sin nada."""
+        filas = self._categorias_tabla + [_FILA_TOTAL]
+        if fila >= len(filas):
+            return
+        categoria = filas[fila]
+        categorias = self._categorias_tabla if categoria == _FILA_TOTAL else [categoria]
+
+        if columna == 3:
+            ids = [i for c in categorias for i in self._ids_por_categoria.get(c, [])]
+        elif self._resultado_capa is None:
+            return
+        else:
+            fuente = (
+                self._resultado_capa.ids_fuera,
+                self._resultado_capa.ids_dentro,
+                self._resultado_capa.ids_total,
+            )[columna]
+            ids = [i for c in categorias for i in fuente.get(c, [])]
+
+        if not ids:
+            return
+
+        ids = cnt.ordenar_ids(ids)
+        self._dialogo_texto(
+            f"{categoria} — {_COLUMNAS[columna]}",
+            f"{len(ids)} N° de problema:",
+            "\n".join(ids),
+        )
 
     # ── Extraccion desde la planilla ─────────────────────────────────────
     def _pedir_planilla(self):
@@ -379,10 +430,10 @@ class PanelConteo(QDockWidget):
 
         QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
         try:
-            (resultado, descartados), error = cnt.contar_planilla(ruta), None
+            resultado_planilla, error = cnt.contar_planilla(ruta), None
             ids_sin_cargar, ids_sin_planilla = self._calcular_comparacion_ids(ruta)
         except (OSError, ValueError, KeyError) as exc:
-            resultado, descartados, ids_sin_cargar, ids_sin_planilla, error = None, 0, [], [], str(exc)
+            resultado_planilla, ids_sin_cargar, ids_sin_planilla, error = None, [], [], str(exc)
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -392,11 +443,16 @@ class PanelConteo(QDockWidget):
             QMessageBox.warning(self, "No se pudo leer la planilla", error)
             return
 
-        fecha = guardar_comparacion(resultado, ruta, ids_sin_cargar, ids_sin_planilla)
+        fecha = guardar_comparacion(
+            resultado_planilla.conteo, ruta, ids_sin_cargar, ids_sin_planilla,
+            resultado_planilla.ids_por_categoria,
+        )
         self.refrescar()
-        detalle = f"Se contaron {sum(resultado.values())} problemas de la planilla ({fecha})."
-        if descartados:
-            detalle += f"\nSe descartaron {descartados} finalizados."
+        detalle = f"Se contaron {sum(resultado_planilla.conteo.values())} problemas de la planilla ({fecha})."
+        if resultado_planilla.descartados:
+            detalle += f"\nSe descartaron {resultado_planilla.descartados} finalizados/no corresponde."
+        if resultado_planilla.excluidos:
+            detalle += f"\nSe excluyeron {resultado_planilla.excluidos} de Limpieza."
         if self._capa is None:
             detalle += f"\nLa capa '{CAPA_OS}' no está cargada: no se compararon los IDs."
         else:
@@ -415,15 +471,15 @@ class PanelConteo(QDockWidget):
         hay con qué comparar, asi que conserva lo que ya estaba guardado en
         vez de vaciarlo."""
         if self._capa is None:
-            _, _, _, sin_cargar, sin_planilla = leer_comparacion()
-            return sin_cargar, sin_planilla
+            datos = leer_comparacion()
+            return datos["ids_sin_cargar"], datos["ids_sin_planilla"]
 
         ids_planilla = cnt.leer_ids_planilla(ruta)
         ids_sin_cargar = cnt.ids_faltantes(ids_planilla, cnt.ids_capa(self._capa))
 
         # Solo los abiertos de la capa: la planilla del sistema tambien es
-        # solo de problemas abiertos, asi que un finalizado nuestro no tiene
-        # por que estar ahi.
+        # solo de problemas abiertos, asi que un finalizado/no corresponde
+        # nuestro no tiene por que estar ahi.
         ids_capa_abiertos = cnt.ids_capa(self._capa, campo_etapa=cnt.CAMPO_ETAPA)
         ids_sin_planilla = cnt.ids_faltantes(ids_capa_abiertos, ids_planilla)
 
@@ -463,8 +519,8 @@ class PanelConteo(QDockWidget):
         self._dialogo_texto(
             "Problemas sin planilla",
             f"{len(self._ids_sin_planilla)} número(s) de '{cnt.CAMPO_N_PROBLEMA}' "
-            f"abiertos en la capa (Etapa distinta de finalizada) que no aparecen "
-            f"en '{cnt.CAMPO_PROBLEMA}' de la planilla:",
+            f"abiertos en la capa (Etapa distinta de finalizada/no corresponde) que "
+            f"no aparecen en '{cnt.CAMPO_PROBLEMA}' de la planilla:",
             "\n".join(self._ids_sin_planilla),
         )
 
@@ -474,7 +530,10 @@ class PanelConteo(QDockWidget):
         self._dialogo_texto(
             "Qué cuenta cada fila",
             "Mismo criterio para la capa y para la planilla: si algo está mal "
-            "clasificado, es acá donde hay que corregirlo.",
+            "clasificado, es acá donde hay que corregirlo. Los Tipo de Limpieza "
+            "(Alcantarilla/Colector/Registro/Boca de Tormenta obstruidos o "
+            "sucios, Conexión obstruida o sucia) no entran en ninguna fila: se "
+            "excluyen del todo, ni siquiera van a 'Otros'.",
             cuerpo,
         )
 
