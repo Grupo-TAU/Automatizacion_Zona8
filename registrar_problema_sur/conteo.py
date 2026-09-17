@@ -181,11 +181,15 @@ def leer_ids_planilla(ruta, campo=CAMPO_PROBLEMA, hoja=None):
     return [t for t in (str(v).strip() for v in leer_columna(ruta, campo, hoja)) if t]
 
 
-def ids_capa(capa, campo=CAMPO_N_PROBLEMA):
+def ids_capa(capa, campo=CAMPO_N_PROBLEMA, campo_etapa=None):
     """
-    Los N° de problema de la capa, como texto y sin vacios. Recorre toda la
-    capa sin importar la Etapa: un problema finalizado que sigue en la capa no
-    es un problema "faltante".
+    Los N° de problema de la capa, como texto y sin vacios.
+
+    Sin campo_etapa recorre toda la capa: un problema finalizado que sigue en
+    la capa ya esta cargado igual, asi que cuenta como "presente". Pasando
+    campo_etapa (tipicamente CAMPO_ETAPA) descarta los finalizados: es el
+    universo a usar cuando del otro lado hay una planilla que, como la del
+    sistema, solo trae problemas abiertos.
     """
     from qgis.core import QgsFeatureRequest
 
@@ -195,12 +199,22 @@ def ids_capa(capa, campo=CAMPO_N_PROBLEMA):
             f"La capa '{capa.name()}' no tiene el campo '{campo}'.\n"
             f"Campos: {', '.join(capa.fields().names())}"
         )
+    idx_etapa = capa.fields().lookupField(campo_etapa) if campo_etapa else -1
+
+    atributos = [idx] + ([idx_etapa] if idx_etapa >= 0 else [])
     solicitud = (
         QgsFeatureRequest()
-        .setSubsetOfAttributes([idx])
+        .setSubsetOfAttributes(atributos)
         .setFlags(QgsFeatureRequest.NoGeometry)
     )
-    return [t for t in (str(f[idx]).strip() for f in capa.getFeatures(solicitud)) if t and t.lower() != "null"]
+    ids = []
+    for feature in capa.getFeatures(solicitud):
+        if idx_etapa >= 0 and es_descartable(feature[idx_etapa]):
+            continue
+        texto = str(feature[idx]).strip()
+        if texto and texto.lower() != "null":
+            ids.append(texto)
+    return ids
 
 
 def _clave_orden_id(id_):
@@ -209,14 +223,14 @@ def _clave_orden_id(id_):
     return (0, int(id_)) if id_.isdigit() else (1, id_)
 
 
-def ids_faltantes(ids_planilla, ids_capa):
+def ids_faltantes(ids, ids_referencia):
     """
-    Los N° de problema de la planilla que no aparecen en la capa, sin
-    duplicados y ordenados. La planilla es la exportacion del sistema, asi que
-    esto son problemas que estan reportados pero todavia no se cargaron.
+    Los elementos de `ids` que no aparecen en `ids_referencia`, sin duplicados
+    y ordenados. Generico y simetrico: sirve tanto para "que hay en la
+    planilla que no esta en la capa" como al reves, segun que se le pase.
     """
-    presentes = set(ids_capa)
-    return sorted({i for i in ids_planilla if i not in presentes}, key=_clave_orden_id)
+    presentes = set(ids_referencia)
+    return sorted({i for i in ids if i not in presentes}, key=_clave_orden_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
