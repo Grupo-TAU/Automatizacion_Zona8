@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QFileDialog, QMessageBox, QApplication,
+    QDialog, QPlainTextEdit, QDialogButtonBox,
 )
 from PyQt5.QtGui import QBrush, QColor, QFont, QCursor
 
@@ -35,6 +36,7 @@ _SCOPE = "RegistrarProblemaSur"
 _CLAVE_CONTEO = "comparacion/conteo"
 _CLAVE_FECHA = "comparacion/fecha"
 _CLAVE_ARCHIVO = "comparacion/archivo"
+_CLAVE_IDS_FALTANTES = "comparacion/ids_faltantes"
 
 # Coalescencia de los recalculos: una edicion masiva dispara decenas de señales
 # seguidas y no tiene sentido recorrer la capa en cada una.
@@ -42,25 +44,32 @@ _MS_REBOTE = 250
 
 
 def leer_comparacion():
-    """Devuelve (conteo, fecha, archivo). conteo es {} si no hay nada guardado."""
+    """Devuelve (conteo, fecha, archivo, ids_faltantes). conteo es {} y
+    ids_faltantes es [] si no hay nada guardado."""
     proyecto = QgsProject.instance()
     crudo, _ = proyecto.readEntry(_SCOPE, _CLAVE_CONTEO, "")
     fecha, _ = proyecto.readEntry(_SCOPE, _CLAVE_FECHA, "")
     archivo, _ = proyecto.readEntry(_SCOPE, _CLAVE_ARCHIVO, "")
+    crudo_ids, _ = proyecto.readEntry(_SCOPE, _CLAVE_IDS_FALTANTES, "")
     try:
         guardado = json.loads(crudo) if crudo else {}
     except ValueError:
         guardado = {}
-    return guardado, fecha, archivo
+    try:
+        ids_faltantes = json.loads(crudo_ids) if crudo_ids else []
+    except ValueError:
+        ids_faltantes = []
+    return guardado, fecha, archivo, ids_faltantes
 
 
-def guardar_comparacion(conteo, archivo):
+def guardar_comparacion(conteo, archivo, ids_faltantes=()):
     """Congela el conteo de la planilla en el proyecto, con la fecha de ahora."""
     proyecto = QgsProject.instance()
     fecha = QDateTime.currentDateTime().toString("dd/MM/yyyy HH:mm")
     proyecto.writeEntry(_SCOPE, _CLAVE_CONTEO, json.dumps(dict(conteo), ensure_ascii=False))
     proyecto.writeEntry(_SCOPE, _CLAVE_FECHA, fecha)
     proyecto.writeEntry(_SCOPE, _CLAVE_ARCHIVO, archivo)
+    proyecto.writeEntry(_SCOPE, _CLAVE_IDS_FALTANTES, json.dumps(list(ids_faltantes), ensure_ascii=False))
     return fecha
 
 
@@ -74,6 +83,21 @@ _GRIS = "color:#777; font-style:italic;"
 _ROJO = "color:#a03030;"
 
 
+def _texto_filtro_categoria(categoria):
+    """Que Tipo cae en esta fila: para poder chequear de un vistazo si el
+    filtro esta agrupando bien, sin ir a buscar CATEGORIAS en conteo.py."""
+    if categoria == _FILA_TOTAL:
+        return "Suma de todas las filas."
+    if categoria == cnt.CATEGORIA_SIN_DATO:
+        return f"Problemas con el campo '{cnt.CAMPO_TIPO}' vacío."
+    if categoria == cnt.CATEGORIA_RESTO:
+        return f"'{cnt.CAMPO_TIPO}' que no coincide con ninguna otra categoría."
+    patrones = cnt.patrones_categoria(categoria)
+    if not patrones:
+        return ""
+    return f"'{cnt.CAMPO_TIPO}' contiene: " + ", ".join(patrones)
+
+
 class PanelConteo(QDockWidget):
     def __init__(self, parent=None):
         super().__init__("Conteo de Problemas", parent)
@@ -82,6 +106,7 @@ class PanelConteo(QDockWidget):
 
         self._capa = None            # capa a la que estamos enganchados
         self._conexiones = []        # (senal, slot) para poder desconectar
+        self._ids_faltantes = []     # ultimo resultado de la comparacion de IDs
         self._rebote = QTimer(self)
         self._rebote.setSingleShot(True)
         self._rebote.setInterval(_MS_REBOTE)
@@ -136,8 +161,18 @@ class PanelConteo(QDockWidget):
         btn_recalcular.setToolTip("Vuelve a recorrer la capa. El panel ya lo hace solo en cada cambio.")
         btn_recalcular.clicked.connect(self.refrescar)
 
+        self.btn_ids_faltantes = QPushButton("IDs faltantes")
+        self.btn_ids_faltantes.setToolTip(
+            f"Números de '{cnt.CAMPO_PROBLEMA}' de la planilla que no están en el "
+            f"campo '{cnt.CAMPO_N_PROBLEMA}' de la capa: problemas reportados que "
+            "todavía no se cargaron."
+        )
+        self.btn_ids_faltantes.clicked.connect(self._mostrar_ids_faltantes)
+        self.btn_ids_faltantes.setEnabled(False)
+
         fila_botones.addWidget(self.btn_planilla)
         fila_botones.addWidget(btn_recalcular)
+        fila_botones.addWidget(self.btn_ids_faltantes)
         fila_botones.addStretch(1)
         layout.addLayout(fila_botones)
 
@@ -188,23 +223,23 @@ class PanelConteo(QDockWidget):
 
     # ── Calculo y pintado ────────────────────────────────────────────────
     def refrescar(self):
-        comparacion, fecha, archivo = leer_comparacion()
+        comparacion, fecha, archivo, ids_faltantes = leer_comparacion()
 
         if self._capa is None:
             self._vaciar_tabla(f"La capa '{CAPA_OS}' no está cargada en el proyecto.")
-            self._pintar_comparacion(fecha, archivo)
+            self._pintar_comparacion(fecha, archivo, ids_faltantes)
             return
 
         try:
             resultado = cnt.contar_capa(self._capa, cnt.CAMPO_TIPO, CAMPO_DENTRO_ZONA)
         except ValueError as exc:
             self._vaciar_tabla(str(exc))
-            self._pintar_comparacion(fecha, archivo)
+            self._pintar_comparacion(fecha, archivo, ids_faltantes)
             return
 
         self._pintar_tabla(resultado, comparacion)
         self._pintar_estado(resultado)
-        self._pintar_comparacion(fecha, archivo)
+        self._pintar_comparacion(fecha, archivo, ids_faltantes)
 
     def _vaciar_tabla(self, mensaje):
         self.tabla.setRowCount(0)
@@ -221,6 +256,10 @@ class PanelConteo(QDockWidget):
         negrita.setBold(True)
 
         for n, categoria in enumerate(filas):
+            cabecera = self.tabla.verticalHeaderItem(n)
+            if cabecera is not None:
+                cabecera.setToolTip(_texto_filtro_categoria(categoria))
+
             if categoria == _FILA_TOTAL:
                 valores = [
                     sum(resultado.fuera[c] for c in categorias),
@@ -275,14 +314,21 @@ class PanelConteo(QDockWidget):
         self.lbl_estado.setText(" ".join(partes))
         self.lbl_estado.setStyleSheet(estilo)
 
-    def _pintar_comparacion(self, fecha, archivo):
+    def _pintar_comparacion(self, fecha, archivo, ids_faltantes=()):
         if not fecha:
             self.lbl_comparacion.setText(
                 "Comparación: sin datos. Corré la extracción desde un CSV o XLSX."
             )
         else:
             nombre = os.path.basename(archivo) if archivo else "planilla"
-            self.lbl_comparacion.setText(f"Comparación: {nombre} — actualizada el {fecha}.")
+            texto = f"Comparación: {nombre} — actualizada el {fecha}."
+            if ids_faltantes:
+                texto += f" {len(ids_faltantes)} problema(s) sin cargar."
+            self.lbl_comparacion.setText(texto)
+
+        self._ids_faltantes = list(ids_faltantes)
+        self.btn_ids_faltantes.setText(f"IDs faltantes ({len(self._ids_faltantes)})")
+        self.btn_ids_faltantes.setEnabled(bool(self._ids_faltantes))
 
     # ── Extraccion desde la planilla ─────────────────────────────────────
     def _pedir_planilla(self):
@@ -296,8 +342,9 @@ class PanelConteo(QDockWidget):
         QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
         try:
             (resultado, descartados), error = cnt.contar_planilla(ruta), None
+            ids_faltantes = self._calcular_ids_faltantes(ruta)
         except (OSError, ValueError, KeyError) as exc:
-            resultado, descartados, error = None, 0, str(exc)
+            resultado, descartados, ids_faltantes, error = None, 0, [], str(exc)
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -307,16 +354,55 @@ class PanelConteo(QDockWidget):
             QMessageBox.warning(self, "No se pudo leer la planilla", error)
             return
 
-        fecha = guardar_comparacion(resultado, ruta)
+        fecha = guardar_comparacion(resultado, ruta, ids_faltantes)
         self.refrescar()
         detalle = f"Se contaron {sum(resultado.values())} problemas de la planilla ({fecha})."
         if descartados:
             detalle += f"\nSe descartaron {descartados} finalizados."
+        if self._capa is None:
+            detalle += f"\nLa capa '{CAPA_OS}' no está cargada: no se compararon los IDs."
+        else:
+            detalle += f"\n{len(ids_faltantes)} problema(s) de la planilla no están en la capa."
         QMessageBox.information(
             self, "Comparación actualizada",
             f"{detalle}\n\nQueda guardado en el proyecto: acordate de guardarlo "
             "para que lo vean las demás PCs.",
         )
+
+    def _calcular_ids_faltantes(self, ruta):
+        """IDs de 'Problema' de la planilla que no están en 'N_Problema' de la
+        capa. Si la capa no está cargada no hay con qué comparar, asi que
+        conserva lo que ya estaba guardado en vez de vaciarlo."""
+        if self._capa is None:
+            _, _, _, previos = leer_comparacion()
+            return previos
+        ids_planilla = cnt.leer_ids_planilla(ruta)
+        return cnt.ids_faltantes(ids_planilla, cnt.ids_capa(self._capa))
+
+    def _mostrar_ids_faltantes(self):
+        dialogo = QDialog(self)
+        dialogo.setWindowTitle("Problemas sin cargar")
+        layout = QVBoxLayout(dialogo)
+
+        layout.addWidget(QLabel(
+            f"{len(self._ids_faltantes)} número(s) de '{cnt.CAMPO_PROBLEMA}' de la "
+            f"planilla que no aparecen en '{cnt.CAMPO_N_PROBLEMA}' de la capa:"
+        ))
+
+        texto = QPlainTextEdit("\n".join(self._ids_faltantes))
+        texto.setReadOnly(True)
+        layout.addWidget(texto)
+
+        botones = QDialogButtonBox()
+        btn_copiar = botones.addButton("Copiar", QDialogButtonBox.ActionRole)
+        btn_copiar.clicked.connect(
+            lambda: QApplication.clipboard().setText("\n".join(self._ids_faltantes))
+        )
+        botones.addButton(QDialogButtonBox.Close).clicked.connect(dialogo.accept)
+        layout.addWidget(botones)
+
+        dialogo.resize(280, 400)
+        dialogo.exec_()
 
     # ── Ciclo de vida ────────────────────────────────────────────────────
     def showEvent(self, evento):

@@ -6,6 +6,7 @@ Sin dependencias de UI: reutilizable desde la consola o desde tests.
 from qgis.core import (
     QgsProject,
     QgsFeature,
+    QgsFeatureRequest,
     QgsGeometry,
     QgsCoordinateTransform,
     QgsSpatialIndex,
@@ -28,6 +29,7 @@ CAPA_ZONA = "Zona_delimitada"
 # DENTRO: es la polaridad opuesta a la del clasificador geometrico de mas abajo,
 # que razona en terminos de "fuera". La conversion se hace al escribir.
 CAMPO_DENTRO_ZONA = "Dentro_Zona"
+CAMPO_N_PROBLEMA = "N_Problema"
 
 CAMPOS_PASO1 = [
     ("N°_OS", QVariant.String),
@@ -59,6 +61,39 @@ def obtener_capa(nombre):
         if capa.name().casefold() == objetivo:
             return capa
     return None
+
+
+def existe_n_problema(numero):
+    """
+    True si ya hay un feature en CAPA_OS con ese N_Problema.
+
+    QGIS solo revisa la restriccion "unico" de un campo cuando se edita a
+    traves del formulario de atributos: agregar_feature_os() escribe con la
+    API (capa.addFeature) y la salta en silencio, asi que el chequeo hay que
+    hacerlo a mano antes de dar de alta.
+
+    Devuelve None si la capa no esta en el proyecto o no tiene el campo: en
+    ese caso no hay con que validar, y quien llama decide si bloquea el alta
+    o la deja pasar.
+    """
+    capa = obtener_capa(CAPA_OS)
+    if capa is None:
+        return None
+
+    idx = capa.fields().lookupField(CAMPO_N_PROBLEMA)
+    if idx < 0:
+        return None
+
+    numero = str(numero).strip()
+    if not numero:
+        return False
+
+    solicitud = (
+        QgsFeatureRequest()
+        .setSubsetOfAttributes([idx])
+        .setFlags(QgsFeatureRequest.NoGeometry)
+    )
+    return any(str(feature[idx]).strip() == numero for feature in capa.getFeatures(solicitud))
 
 
 def buscar_punto_padron(numero_padron):

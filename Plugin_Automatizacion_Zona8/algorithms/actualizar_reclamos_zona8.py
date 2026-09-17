@@ -82,16 +82,22 @@ class ActualizarReclamos(QgsProcessingAlgorithm):
     # ── Parametros ─────────────────────────────────────────────────────────────
 
     def initAlgorithm(self, config=None):
+        # defaultValue con el nombre de la capa: QGIS la resuelve sola y la deja
+        # preseleccionada en el desplegable, asi no hay que elegirla a mano en
+        # cada corrida. Si no esta en el proyecto, el desplegable queda vacio y
+        # se elige como siempre.
         self.addParameter(
             QgsProcessingParameterVectorLayer(
                 self.ZONA_DELIMITADA,
-                "Capa Zona_delimitada",
+                "Capa zona_delimitada",
+                defaultValue="zona_delimitada",
             )
         )
         self.addParameter(
             QgsProcessingParameterVectorLayer(
                 self.PROBLEMAS_LIMITADO,
-                "Capa maestra Problemas_limitado",
+                "Capa maestra Problemas_Maestra",
+                defaultValue="problemas_maestra",
             )
         )
         self.addParameter(

@@ -23,6 +23,12 @@ from .intercambio_im import tabla
 
 CAMPO_TIPO = "Tipo"
 CAMPO_ETAPA = "Etapa"
+# "Problema" es la columna con el N° de problema en la planilla del sistema;
+# "N_Problema" es el campo equivalente en la capa (ver capa_utils.CAMPOS_PASO1).
+# Se duplica el nombre de campo en vez de importarlo de capa_utils para que este
+# modulo siga sin depender de qgis a nivel de import.
+CAMPO_PROBLEMA = "Problema"
+CAMPO_N_PROBLEMA = "N_Problema"
 
 # Los problemas finalizados no se cuentan: el panel muestra lo que queda por
 # hacer, no el historico. Se compara contra el PREFIJO de la Etapa normalizada,
@@ -113,6 +119,15 @@ def es_descartable(etapa):
     return t.startswith(ETAPAS_DESCARTADAS)
 
 
+def patrones_categoria(nombre):
+    """Los patrones de Tipo (tal cual, sin normalizar) que arman esta categoria,
+    o None si la categoria no tiene una lista fija (Otros, sin dato)."""
+    for cat_nombre, patrones in CATEGORIAS:
+        if cat_nombre == nombre:
+            return patrones
+    return None
+
+
 def categorias_visibles(*conteos):
     """Las cuatro categorias fijas mas "Otros", y "(sin dato)" solo si alguno de
     los conteos lo trae: una fila vacia permanente confunde mas de lo que informa."""
@@ -156,6 +171,52 @@ def contar_planilla(ruta, campo=CAMPO_TIPO, hoja=None):
             continue
         conteo[clasificar(fila[campo])] += 1
     return conteo, descartados
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMPARACION DE IDs: PLANILLA vs CAPA
+# ─────────────────────────────────────────────────────────────────────────────
+def leer_ids_planilla(ruta, campo=CAMPO_PROBLEMA, hoja=None):
+    """Los N° de problema de la planilla, como texto y sin vacios."""
+    return [t for t in (str(v).strip() for v in leer_columna(ruta, campo, hoja)) if t]
+
+
+def ids_capa(capa, campo=CAMPO_N_PROBLEMA):
+    """
+    Los N° de problema de la capa, como texto y sin vacios. Recorre toda la
+    capa sin importar la Etapa: un problema finalizado que sigue en la capa no
+    es un problema "faltante".
+    """
+    from qgis.core import QgsFeatureRequest
+
+    idx = capa.fields().lookupField(campo)
+    if idx < 0:
+        raise ValueError(
+            f"La capa '{capa.name()}' no tiene el campo '{campo}'.\n"
+            f"Campos: {', '.join(capa.fields().names())}"
+        )
+    solicitud = (
+        QgsFeatureRequest()
+        .setSubsetOfAttributes([idx])
+        .setFlags(QgsFeatureRequest.NoGeometry)
+    )
+    return [t for t in (str(f[idx]).strip() for f in capa.getFeatures(solicitud)) if t and t.lower() != "null"]
+
+
+def _clave_orden_id(id_):
+    """Los N° de problema son numericos casi siempre: ordenarlos como numero
+    evita que "10" quede antes que "2"."""
+    return (0, int(id_)) if id_.isdigit() else (1, id_)
+
+
+def ids_faltantes(ids_planilla, ids_capa):
+    """
+    Los N° de problema de la planilla que no aparecen en la capa, sin
+    duplicados y ordenados. La planilla es la exportacion del sistema, asi que
+    esto son problemas que estan reportados pero todavia no se cargaron.
+    """
+    presentes = set(ids_capa)
+    return sorted({i for i in ids_planilla if i not in presentes}, key=_clave_orden_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
