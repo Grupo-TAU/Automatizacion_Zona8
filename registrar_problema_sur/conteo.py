@@ -52,10 +52,6 @@ CATEGORIAS = [
         "Varios",
         "Acera y/o Pavimento Hundido",
     )),
-    ("Tapas", (
-        "Boca de Tormenta sin Tapa",
-        "Registro sin Tapa",
-    )),
     ("Obras", (
         "Alcantarilla Rota",
         "Boca de Tormenta Dañada",
@@ -77,10 +73,11 @@ CATEGORIA_RESTO = "Otros"
 # fila. Una planilla y una capa que difieren suelen diferir justo aca.
 CATEGORIA_SIN_DATO = "(sin dato)"
 
-# Los problemas de Limpieza los sigue otro circuito aparte de este panel: no
-# se cuentan ni en la capa ni en la planilla, igual que un finalizado (ni
-# siquiera van a "Otros"). Mismo criterio de matcheo que CATEGORIAS: subcadena
-# del Tipo normalizado. Es la ex-categoria "Limpieza".
+# Los problemas de Limpieza y de Tapas los sigue otro circuito aparte de este
+# panel: no se cuentan ni en la capa ni en la planilla, igual que un
+# finalizado (ni siquiera van a "Otros"). Mismo criterio de matcheo que
+# CATEGORIAS: subcadena del Tipo normalizado. Son las ex-categorias "Limpieza"
+# y "Tapas".
 TIPOS_EXCLUIDOS = (
     "Alcantarilla Obstruida",
     "Boca de Tormenta Obstruida",
@@ -92,6 +89,8 @@ TIPOS_EXCLUIDOS = (
     "Conexion Sucia",
     "Conexión de Boca de Tormenta Obstruida",
     "Registro Sucio",
+    "Boca de Tormenta sin Tapa",
+    "Registro sin Tapa",
 )
 
 
@@ -130,8 +129,8 @@ def es_descartable(etapa):
 
 
 def es_tipo_excluido(tipo):
-    """True si el Tipo es de Limpieza (TIPOS_EXCLUIDOS): no se cuenta en este
-    panel, ni en la capa ni en la planilla."""
+    """True si el Tipo es de Limpieza o Tapas (TIPOS_EXCLUIDOS): no se cuenta
+    en este panel, ni en la capa ni en la planilla."""
     t = normalizar(tipo)
     return any(p in t for p in _TIPOS_EXCLUIDOS_NORM)
 
@@ -187,7 +186,7 @@ class ConteoPlanilla:
     def __init__(self):
         self.conteo = Counter()
         self.descartados = 0                  # Etapa finalizada / no corresponde
-        self.excluidos = 0                    # Tipo de Limpieza (TIPOS_EXCLUIDOS)
+        self.excluidos = 0                    # Tipo de Limpieza/Tapas (TIPOS_EXCLUIDOS)
         self.ids_por_categoria = defaultdict(list)
 
 
@@ -196,8 +195,8 @@ def contar_planilla(ruta, campo=CAMPO_TIPO, campo_id=CAMPO_PROBLEMA, hoja=None):
     Cuenta la columna Tipo de un CSV o XLSX por categoria.
 
     Si la planilla trae la columna Etapa, los finalizados/no corresponde se
-    descartan igual que en la capa. Los Tipo de Limpieza (TIPOS_EXCLUIDOS) se
-    excluyen igual que en la capa, tambien. Si la planilla no trae Etapa (es lo
+    descartan igual que en la capa. Los Tipo de Limpieza/Tapas (TIPOS_EXCLUIDOS)
+    se excluyen igual que en la capa, tambien. Si la planilla no trae Etapa (es lo
     que pasa hoy: la exportacion del sistema solo tiene Problema, Tipo,
     Ubicacion y Fecha), no se descarta nada por ese lado, asumiendo que el
     sistema ya exporto unicamente los problemas abiertos.
@@ -223,7 +222,7 @@ def contar_planilla(ruta, campo=CAMPO_TIPO, campo_id=CAMPO_PROBLEMA, hoja=None):
 # ─────────────────────────────────────────────────────────────────────────────
 def leer_ids_planilla(ruta, campo=CAMPO_PROBLEMA, campo_tipo=CAMPO_TIPO, hoja=None):
     """Los N° de problema de la planilla, como texto y sin vacios. Excluye los
-    Tipo de Limpieza (TIPOS_EXCLUIDOS): no se comparan en este panel."""
+    Tipo de Limpieza/Tapas (TIPOS_EXCLUIDOS): no se comparan en este panel."""
     ids = []
     for fila in leer_filas(ruta, campo, (campo_tipo,), hoja):
         if es_tipo_excluido(fila.get(campo_tipo)):
@@ -381,7 +380,7 @@ def contar_capa(capa, campo_tipo=CAMPO_TIPO, campo_dentro_zona=CAMPO_DENTRO_ZONA
     Respeta el filtro de la capa (subset string) porque usa getFeatures(): si la
     capa esta filtrada en el panel de capas, los numeros son los del filtro.
     Los problemas con Etapa finalizada/no corresponde se descartan
-    (ConteoCapa.descartados) y los Tipo de Limpieza se excluyen
+    (ConteoCapa.descartados) y los Tipo de Limpieza/Tapas se excluyen
     (ConteoCapa.excluidos); ninguno de los dos entra en ningun Counter. Pide
     solo los atributos que usa y ninguna geometria, que es lo que hace viable
     recalcular en cada edicion.

@@ -342,7 +342,7 @@ class PanelConteo(QDockWidget):
         if resultado.descartados:
             partes.append(f"Se descartaron {resultado.descartados} finalizados/no corresponde.")
         if resultado.excluidos:
-            partes.append(f"Se excluyeron {resultado.excluidos} de Limpieza (no se cuentan en este panel).")
+            partes.append(f"Se excluyeron {resultado.excluidos} de Limpieza/Tapas (no se cuentan en este panel).")
         if resultado.n_sin_clasificar:
             # Fuera + Dentro no cierra contra Total cuando pasa esto, así que
             # conviene decirlo en vez de dejar que el usuario haga la resta.
@@ -452,7 +452,7 @@ class PanelConteo(QDockWidget):
         if resultado_planilla.descartados:
             detalle += f"\nSe descartaron {resultado_planilla.descartados} finalizados/no corresponde."
         if resultado_planilla.excluidos:
-            detalle += f"\nSe excluyeron {resultado_planilla.excluidos} de Limpieza."
+            detalle += f"\nSe excluyeron {resultado_planilla.excluidos} de Limpieza/Tapas."
         if self._capa is None:
             detalle += f"\nLa capa '{CAPA_OS}' no está cargada: no se compararon los IDs."
         else:
@@ -532,8 +532,9 @@ class PanelConteo(QDockWidget):
             "Mismo criterio para la capa y para la planilla: si algo está mal "
             "clasificado, es acá donde hay que corregirlo. Los Tipo de Limpieza "
             "(Alcantarilla/Colector/Registro/Boca de Tormenta obstruidos o "
-            "sucios, Conexión obstruida o sucia) no entran en ninguna fila: se "
-            "excluyen del todo, ni siquiera van a 'Otros'.",
+            "sucios, Conexión obstruida o sucia) y de Tapas (Boca de Tormenta o "
+            "Registro sin Tapa) no entran en ninguna fila: se excluyen del "
+            "todo, ni siquiera van a 'Otros'.",
             cuerpo,
         )
 
