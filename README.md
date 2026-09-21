@@ -160,6 +160,28 @@ con este volumen y deja el resultado igual cuando la capa pase a PostGIS, donde
 
 ---
 
+## Envío del conteo por mail
+
+`enviar_conteo_semanal.py` (raíz del repo) manda por mail la tabla del panel
+"Conteo de Problemas" (categoría × Fuera/Dentro de zona) leyendo directo de
+`problemas_sur.gpkg`, sin QGIS: el GeoPackage se abre con `sqlite3` en modo solo
+lectura. Usa `conteo.contar_filas`, la misma función que el panel, así que los
+números coinciden. Es la contraparte de `enviar_conteo_semanal.py` de
+`Automatizaciones_Orden_Servicio`.
+
+```
+python enviar_conteo_semanal.py --probar   # cuenta e imprime, sin enviar
+python enviar_conteo_semanal.py            # cuenta y envía
+```
+
+La configuración SMTP va en `envio_conteo.ini` (no se sube al repo; copiar
+`envio_conteo.ini.example`, o el `.ini` del otro proyecto, que tiene la misma
+sección `[smtp]`). Para correrlo solo, programarlo en el Programador de tareas de
+Windows; si falla, el motivo queda en `envio_conteo.log`. Ruta del .gpkg y tabla:
+constantes al principio del script.
+
+---
+
 ## Servicio WFS
 
 | Propiedad | Valor |

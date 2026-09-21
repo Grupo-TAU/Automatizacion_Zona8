@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+envio_conteo.ini
+envio_conteo.log

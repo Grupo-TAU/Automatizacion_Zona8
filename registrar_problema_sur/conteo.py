@@ -372,18 +372,47 @@ class ConteoCapa:
         return sum(self.sin_clasificar.values())
 
 
+def contar_filas(filas):
+    """
+    Cuenta filas (tipo, dentro_zona, etapa, id_problema) por categoria x zona.
+
+    Es la unica implementacion del criterio de conteo: contar_capa() le pasa
+    los features de QGIS y enviar_conteo_semanal.py le pasa las filas leidas del
+    GeoPackage con sqlite3, asi que el panel y el mail no pueden divergir.
+
+    Las Etapa finalizada/no corresponde se descartan (ConteoCapa.descartados) y
+    los Tipo de Limpieza/Tapas se excluyen (ConteoCapa.excluidos); ninguno de
+    los dos entra en ningun Counter. Una etapa None no descarta nada.
+    """
+    conteo = ConteoCapa()
+    for tipo, dentro_zona, etapa, id_problema in filas:
+        # Los finalizados/no corresponde no entran en ninguna columna: el panel
+        # muestra lo que queda por hacer.
+        if es_descartable(etapa):
+            conteo.descartados += 1
+            continue
+        # Limpieza y Tapas las sigue otro circuito aparte: tampoco entran.
+        if es_tipo_excluido(tipo):
+            conteo.excluidos += 1
+            continue
+        id_texto = "" if id_problema is None else str(id_problema).strip()
+        if id_texto.lower() == "null":
+            id_texto = ""
+        conteo.agregar(tipo, interpretar_dentro_zona(dentro_zona), id_texto)
+    return conteo
+
+
 def contar_capa(capa, campo_tipo=CAMPO_TIPO, campo_dentro_zona=CAMPO_DENTRO_ZONA,
                 campo_etapa=CAMPO_ETAPA, campo_id=CAMPO_N_PROBLEMA):
     """
-    Recorre los features de la capa y los cuenta por categoria x zona.
+    Recorre los features de la capa y los cuenta por categoria x zona (ver
+    contar_filas para el criterio).
 
     Respeta el filtro de la capa (subset string) porque usa getFeatures(): si la
     capa esta filtrada en el panel de capas, los numeros son los del filtro.
-    Los problemas con Etapa finalizada/no corresponde se descartan
-    (ConteoCapa.descartados) y los Tipo de Limpieza/Tapas se excluyen
-    (ConteoCapa.excluidos); ninguno de los dos entra en ningun Counter. Pide
-    solo los atributos que usa y ninguna geometria, que es lo que hace viable
-    recalcular en cada edicion.
+    Pide solo los atributos que usa y ninguna geometria, que es lo que hace
+    viable recalcular en cada edicion. Si la capa no tiene Dentro_Zona, Etapa o
+    N_Problema, esas columnas quedan como None (no se descarta ni se clasifica).
     """
     from qgis.core import QgsFeatureRequest
 
@@ -404,21 +433,13 @@ def contar_capa(capa, campo_tipo=CAMPO_TIPO, campo_dentro_zona=CAMPO_DENTRO_ZONA
         .setFlags(QgsFeatureRequest.NoGeometry)
     )
 
-    conteo = ConteoCapa()
-    for feature in capa.getFeatures(solicitud):
-        # Los finalizados/no corresponde no entran en ninguna columna: el panel
-        # muestra lo que queda por hacer. Si la capa no tiene el campo Etapa no
-        # se descarta nada.
-        if idx_etapa >= 0 and es_descartable(feature[idx_etapa]):
-            conteo.descartados += 1
-            continue
-        # Limpieza la sigue otro circuito aparte: tampoco entra en ninguna columna.
-        if es_tipo_excluido(feature[idx_tipo]):
-            conteo.excluidos += 1
-            continue
-        dentro = interpretar_dentro_zona(feature[idx_dz]) if idx_dz >= 0 else None
-        id_problema = str(feature[idx_id]).strip() if idx_id >= 0 else ""
-        if id_problema.lower() == "null":
-            id_problema = ""
-        conteo.agregar(feature[idx_tipo], dentro, id_problema)
-    return conteo
+    def _filas():
+        for feature in capa.getFeatures(solicitud):
+            yield (
+                feature[idx_tipo],
+                feature[idx_dz] if idx_dz >= 0 else None,
+                feature[idx_etapa] if idx_etapa >= 0 else None,
+                feature[idx_id] if idx_id >= 0 else None,
+            )
+
+    return contar_filas(_filas())
