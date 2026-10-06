@@ -336,8 +336,13 @@ class ConteoCapa:
     clic en una celda del panel). Un feature sin N_Problema cuenta igual en el
     Counter pero no deja rastro en estas listas.
 
+    total_sur / ids_total_sur son el total SIN excluir los Tipo de Limpieza/Tapas
+    (TIPOS_EXCLUIDOS): los excluidos se suman a la categoria "Otros". Es el
+    "Total Sur"; total, en cambio, es el "Total Obras" (solo lo que se sigue en
+    este circuito). Las Etapa descartadas no entran en ninguno de los dos.
+
     descartados cuenta Etapa finalizada/no corresponde; excluidos cuenta Tipo
-    de Limpieza (TIPOS_EXCLUIDOS). Ninguno de los dos entra en ningun Counter.
+    de Limpieza/Tapas. Ninguno de los dos entra en fuera/dentro/total.
     """
 
     def __init__(self):
@@ -345,17 +350,28 @@ class ConteoCapa:
         self.dentro = Counter()
         self.sin_clasificar = Counter()
         self.total = Counter()
+        self.total_sur = Counter()
         self.ids_fuera = defaultdict(list)
         self.ids_dentro = defaultdict(list)
         self.ids_total = defaultdict(list)
+        self.ids_total_sur = defaultdict(list)
         self.descartados = 0
         self.excluidos = 0
+
+    def agregar_excluido(self, id_problema=""):
+        """Un Tipo de Limpieza/Tapas: no entra en Obras, pero si en el Total Sur."""
+        self.excluidos += 1
+        self.total_sur[CATEGORIA_RESTO] += 1
+        if id_problema:
+            self.ids_total_sur[CATEGORIA_RESTO].append(id_problema)
 
     def agregar(self, tipo, dentro, id_problema=""):
         categoria = clasificar(tipo)
         self.total[categoria] += 1
+        self.total_sur[categoria] += 1
         if id_problema:
             self.ids_total[categoria].append(id_problema)
+            self.ids_total_sur[categoria].append(id_problema)
         if dentro is True:
             self.dentro[categoria] += 1
             if id_problema:
@@ -381,8 +397,8 @@ def contar_filas(filas):
     GeoPackage con sqlite3, asi que el panel y el mail no pueden divergir.
 
     Las Etapa finalizada/no corresponde se descartan (ConteoCapa.descartados) y
-    los Tipo de Limpieza/Tapas se excluyen (ConteoCapa.excluidos); ninguno de
-    los dos entra en ningun Counter. Una etapa None no descarta nada.
+    los Tipo de Limpieza/Tapas se excluyen de Obras (ConteoCapa.excluidos) pero
+    cuentan en el Total Sur, dentro de "Otros". Una etapa None no descarta nada.
     """
     conteo = ConteoCapa()
     for tipo, dentro_zona, etapa, id_problema in filas:
@@ -391,13 +407,13 @@ def contar_filas(filas):
         if es_descartable(etapa):
             conteo.descartados += 1
             continue
-        # Limpieza y Tapas las sigue otro circuito aparte: tampoco entran.
-        if es_tipo_excluido(tipo):
-            conteo.excluidos += 1
-            continue
         id_texto = "" if id_problema is None else str(id_problema).strip()
         if id_texto.lower() == "null":
             id_texto = ""
+        # Limpieza y Tapas las sigue otro circuito aparte: no son Obras.
+        if es_tipo_excluido(tipo):
+            conteo.agregar_excluido(id_texto)
+            continue
         conteo.agregar(tipo, interpretar_dentro_zona(dentro_zona), id_texto)
     return conteo
 

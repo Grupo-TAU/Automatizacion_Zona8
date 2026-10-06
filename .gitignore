@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 envio_conteo.ini
 envio_conteo.log
+envio_conteo_preview.html

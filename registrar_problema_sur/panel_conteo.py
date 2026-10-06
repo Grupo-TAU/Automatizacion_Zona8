@@ -85,7 +85,11 @@ def guardar_comparacion(conteo, archivo, ids_sin_cargar=(), ids_sin_planilla=(),
 # ─────────────────────────────────────────────────────────────────────────────
 # PANEL
 # ─────────────────────────────────────────────────────────────────────────────
-_COLUMNAS = ["Fuera de Zona", "Dentro de Zona", "Total", "Comparación"]
+# "Total Obras" es lo que se sigue en este circuito (sin Limpieza/Tapas) y es
+# contra lo que se compara la planilla; "Total Sur" es todo, con Limpieza/Tapas
+# sumados en "Otros".
+_COLUMNAS = ["Fuera de Zona", "Dentro de Zona", "Total Obras", "Total Sur", "Comparación"]
+_COL_COMPARACION = 4
 _FILA_TOTAL = "TOTAL"
 
 _GRIS = "color:#777; font-style:italic;"
@@ -100,7 +104,10 @@ def _texto_filtro_categoria(categoria):
     if categoria == cnt.CATEGORIA_SIN_DATO:
         return f"Problemas con el campo '{cnt.CAMPO_TIPO}' vacío."
     if categoria == cnt.CATEGORIA_RESTO:
-        return f"'{cnt.CAMPO_TIPO}' que no coincide con ninguna otra categoría."
+        return (
+            f"'{cnt.CAMPO_TIPO}' que no coincide con ninguna otra categoría. "
+            "En Total Sur se suman acá los de Limpieza/Tapas."
+        )
     patrones = cnt.patrones_categoria(categoria)
     if not patrones:
         return ""
@@ -306,6 +313,7 @@ class PanelConteo(QDockWidget):
                     sum(resultado.fuera[c] for c in categorias),
                     sum(resultado.dentro[c] for c in categorias),
                     sum(resultado.total[c] for c in categorias),
+                    sum(resultado.total_sur[c] for c in categorias),
                     # Sin comparacion corrida, el total tambien va vacio: si no,
                     # queda un 0 en rojo que parece un desvio real.
                     sum(int(comparacion.get(c, 0)) for c in categorias) if comparacion else None,
@@ -315,6 +323,7 @@ class PanelConteo(QDockWidget):
                     resultado.fuera[categoria],
                     resultado.dentro[categoria],
                     resultado.total[categoria],
+                    resultado.total_sur[categoria],
                     comparacion.get(categoria),
                 ]
 
@@ -327,7 +336,7 @@ class PanelConteo(QDockWidget):
                 item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 if categoria == _FILA_TOTAL:
                     item.setFont(negrita)
-                if col == 3 and valor is not None and int(valor) != int(valores[2]):
+                if col == _COL_COMPARACION and valor is not None and int(valor) != int(valores[2]):
                     item.setForeground(QBrush(QColor("#a03030")))
                     item.setFont(negrita)
                     item.setToolTip(
@@ -342,7 +351,7 @@ class PanelConteo(QDockWidget):
         if resultado.descartados:
             partes.append(f"Se descartaron {resultado.descartados} finalizados/no corresponde.")
         if resultado.excluidos:
-            partes.append(f"Se excluyeron {resultado.excluidos} de Limpieza/Tapas (no se cuentan en este panel).")
+            partes.append(f"Se excluyeron {resultado.excluidos} de Limpieza/Tapas (no son Total Obras; sí cuentan en Total Sur, en Otros).")
         if resultado.n_sin_clasificar:
             # Fuera + Dentro no cierra contra Total cuando pasa esto, así que
             # conviene decirlo en vez de dejar que el usuario haga la resta.
@@ -397,7 +406,7 @@ class PanelConteo(QDockWidget):
         categoria = filas[fila]
         categorias = self._categorias_tabla if categoria == _FILA_TOTAL else [categoria]
 
-        if columna == 3:
+        if columna == _COL_COMPARACION:
             ids = [i for c in categorias for i in self._ids_por_categoria.get(c, [])]
         elif self._resultado_capa is None:
             return
@@ -406,6 +415,7 @@ class PanelConteo(QDockWidget):
                 self._resultado_capa.ids_fuera,
                 self._resultado_capa.ids_dentro,
                 self._resultado_capa.ids_total,
+                self._resultado_capa.ids_total_sur,
             )[columna]
             ids = [i for c in categorias for i in fuente.get(c, [])]
 
@@ -533,8 +543,8 @@ class PanelConteo(QDockWidget):
             "clasificado, es acá donde hay que corregirlo. Los Tipo de Limpieza "
             "(Alcantarilla/Colector/Registro/Boca de Tormenta obstruidos o "
             "sucios, Conexión obstruida o sucia) y de Tapas (Boca de Tormenta o "
-            "Registro sin Tapa) no entran en ninguna fila: se excluyen del "
-            "todo, ni siquiera van a 'Otros'.",
+            "Registro sin Tapa) no entran en Total Obras ni en Comparación; en "
+            "Total Sur sí cuentan, sumados a 'Otros'.",
             cuerpo,
         )
 
