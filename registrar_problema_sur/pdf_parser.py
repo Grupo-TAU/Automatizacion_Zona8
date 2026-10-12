@@ -93,6 +93,30 @@ def _extraer_fecha_ingreso(texto):
     return m.group(1) if m else None
 
 
+def _extraer_descripcion(texto):
+    """Texto tras el 2.º "Informe:" (el 1.º es el del itinerario) hasta "TOTAL DE ARCHIVOS"."""
+    marcas = list(re.finditer(r'Informe:', texto))
+    if len(marcas) < 2:
+        return None
+    resto = texto[marcas[1].end():]
+    corte = re.search(r'TOTAL DE ARCHIVOS', resto)
+    if corte:
+        resto = resto[:corte.start()]
+    return re.sub(r'\s+', ' ', resto).strip() or None
+
+
+def _extraer_contacto(texto):
+    """
+    Celular de la fila bajo "Nombre Documento Teléfono Celular" (Solicitantes).
+    Teléfono suele venir vacío: con un solo número es el documento y no hay contacto.
+    """
+    m = re.search(r'Nombre\s+Documento\s+Tel[eé]fono\s+Celular\s*\n(.+)', texto)
+    if not m:
+        return None
+    numeros = re.findall(r'\b\d{6,}\b', m.group(1))
+    return numeros[-1] if len(numeros) >= 2 else None
+
+
 def parsear_pdf_os(ruta_pdf):
     """
     Extrae los datos de la OS desde el PDF individual (el que llega por correo
@@ -115,12 +139,13 @@ def parsear_pdf_os(ruta_pdf):
     if fecha_ingreso:
         datos['fecha_ingreso'] = fecha_ingreso
 
-    # ── Descripción — entre "Observación:" y "Problema Nº:" ───────────
-    m = re.search(r'Observaci[oó]n:\s*(.+?)\s*Problema\s*N[°º]:', texto, re.DOTALL)
-    if m:
-        desc = re.sub(r'\s+', ' ', m.group(1)).strip()
-        if desc:
-            datos['descripcion'] = desc
+    desc = _extraer_descripcion(texto)
+    if desc:
+        datos['descripcion'] = desc
+
+    contacto = _extraer_contacto(texto)
+    if contacto:
+        datos['contacto'] = contacto
 
     ubic, padron = _extraer_ubicacion_y_padron(texto)
     if ubic:
@@ -186,13 +211,13 @@ def parsear_pdf_itinerario(ruta_pdf):
         if fecha_ingreso:
             datos['fecha_ingreso'] = fecha_ingreso
 
-        # ── Descripción — casi siempre vacía en este formato; se deja
-        # vacía si no hay contenido real entre los marcadores ────────────
-        m = re.search(r'Observaci[oó]n:\s*(.+?)\s*Problema\s*N[°º]:', texto, re.DOTALL)
-        if m:
-            desc = re.sub(r'\s+', ' ', m.group(1)).strip()
-            if desc:
-                datos['descripcion'] = desc
+        desc = _extraer_descripcion(texto)
+        if desc:
+            datos['descripcion'] = desc
+
+        contacto = _extraer_contacto(texto)
+        if contacto:
+            datos['contacto'] = contacto
 
         ubic, padron = _extraer_ubicacion_y_padron(texto)
         if ubic:

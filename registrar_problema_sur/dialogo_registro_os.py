@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt, QDate
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QLineEdit, QPushButton, QFileDialog,
-    QMessageBox, QGroupBox, QApplication, QComboBox,
+    QMessageBox, QGroupBox, QApplication, QComboBox, QWidget,
 )
 from PyQt5.QtGui import QFont, QCursor
 
@@ -38,7 +38,9 @@ class DialogoRegistroOS(QDialog):
         self.punto_xy = None
         self._capturador = None
         self._herramienta_previa = None
-        self._cola_itinerario = []  # datos de las OS pendientes (excluye la que está en pantalla)
+        self._items_itinerario = []  # dicts parseados de todas las OS del itinerario
+        self._indice_itinerario = 0  # OS que está en pantalla
+        self._registradas_itinerario = set()  # índices ya registrados
         self._total_itinerario = 0  # 0 = no se está cargando un itinerario
         self._nombre_itinerario = ""
         self._clasificador_zona = None      # se arma una sola vez por diálogo
@@ -113,8 +115,23 @@ class DialogoRegistroOS(QDialog):
         self.lbl_progreso_itinerario.setStyleSheet(
             "color:#5a3d8a; font-weight:bold; font-style:italic;"
         )
-        self.lbl_progreso_itinerario.setVisible(False)
-        layout.addWidget(self.lbl_progreso_itinerario)
+        self.btn_itin_anterior = QPushButton("◀")
+        self.btn_itin_anterior.setFixedWidth(36)
+        self.btn_itin_anterior.setToolTip("OS anterior")
+        self.btn_itin_anterior.clicked.connect(lambda: self._navegar_itinerario(-1))
+        self.btn_itin_siguiente = QPushButton("▶")
+        self.btn_itin_siguiente.setFixedWidth(36)
+        self.btn_itin_siguiente.setToolTip("OS siguiente")
+        self.btn_itin_siguiente.clicked.connect(lambda: self._navegar_itinerario(1))
+
+        self.barra_itinerario = QWidget()
+        h_itin = QHBoxLayout(self.barra_itinerario)
+        h_itin.setContentsMargins(0, 0, 0, 0)
+        h_itin.addWidget(self.btn_itin_anterior)
+        h_itin.addWidget(self.lbl_progreso_itinerario, 1)
+        h_itin.addWidget(self.btn_itin_siguiente)
+        self.barra_itinerario.setVisible(False)
+        layout.addWidget(self.barra_itinerario)
 
         # ── Datos ────────────────────────────────────────────────────────
         grp = QGroupBox("Datos de la OS")
@@ -126,6 +143,7 @@ class DialogoRegistroOS(QDialog):
         self.f_fecha_ingreso.setText(QDate.currentDate().toString("dd/MM/yyyy"))
         self.f_ubicacion = self._campo("ej: 25 DE MAYO Nº 259")
         self.f_descripcion = self._campo("ej: Inspección cámara televisada")
+        self.f_contacto = self._campo("ej: 094646262")
         self.f_n_problema = self._campo("ej: 123456")
         self.f_contrato = self._campo("ej: Baderery-Giberol")
         self.f_n_trabajo = self._campo("ej: 12345")
@@ -137,6 +155,7 @@ class DialogoRegistroOS(QDialog):
         form.addRow("Fecha ingreso:", self.f_fecha_ingreso)
         form.addRow("Ubicación:", self.f_ubicacion)
         form.addRow("Descripción:", self.f_descripcion)
+        form.addRow("Contacto:", self.f_contacto)
         form.addRow("N° Problema:", self.f_n_problema)
         form.addRow("Contrato:", self.f_contrato)
         form.addRow("N° Trabajo:", self.f_n_trabajo)
@@ -213,7 +232,7 @@ class DialogoRegistroOS(QDialog):
     def _limpiar_formulario(self):
         for widget in (
             self.f_orden_servicio, self.f_ubicacion, self.f_descripcion,
-            self.f_n_problema, self.f_contrato, self.f_n_trabajo, self.f_tipo,
+            self.f_contacto, self.f_n_problema, self.f_contrato, self.f_n_trabajo, self.f_tipo,
         ):
             widget.clear()
         self.f_fecha_ingreso.setText(QDate.currentDate().toString("dd/MM/yyyy"))
@@ -232,6 +251,7 @@ class DialogoRegistroOS(QDialog):
             'orden_servicio': self.f_orden_servicio,
             'fecha_ingreso': self.f_fecha_ingreso,
             'descripcion': self.f_descripcion,
+            'contacto': self.f_contacto,
             'ubicacion': self.f_ubicacion,
             'n_problema': self.f_n_problema,
             'sector': self.f_contrato,
@@ -271,6 +291,12 @@ class DialogoRegistroOS(QDialog):
             QMessageBox.warning(self, "Error al leer el PDF", str(e))
             return
 
+        # Un PDF individual saca al diálogo del modo itinerario
+        self._total_itinerario = 0
+        self._items_itinerario = []
+        self._registradas_itinerario = set()
+        self.barra_itinerario.setVisible(False)
+
         ubicado = self._aplicar_datos_a_formulario(datos)
 
         self.lbl_pdf.setText(f"✓ {os.path.basename(ruta_pdf)}")
@@ -309,24 +335,37 @@ class DialogoRegistroOS(QDialog):
             return
 
         self._nombre_itinerario = os.path.basename(ruta_pdf)
+        self._items_itinerario = datos_lista
         self._total_itinerario = len(datos_lista)
-        self._cola_itinerario = datos_lista[1:]
-        self._cargar_item_de_cola(datos_lista[0])
+        self._registradas_itinerario = set()
+        self._mostrar_item_itinerario(0)
 
-    def _cargar_item_de_cola(self, datos):
+    def _navegar_itinerario(self, paso):
+        # Lo editado sin registrar se pierde: se recarga desde el PDF
+        nuevo = self._indice_itinerario + paso
+        if 0 <= nuevo < self._total_itinerario:
+            self._mostrar_item_itinerario(nuevo)
+
+    def _mostrar_item_itinerario(self, indice):
+        self._indice_itinerario = indice
+        datos = self._items_itinerario[indice]
         self._limpiar_formulario()
         ubicado = self._aplicar_datos_a_formulario(datos)
 
-        indice = self._total_itinerario - len(self._cola_itinerario)
         numero_os = datos.get('orden_servicio', '?')
-
-        self.lbl_progreso_itinerario.setText(
-            f"Itinerario: OS {indice} de {self._total_itinerario} (N° {numero_os}) "
-            f"— {self._nombre_itinerario}"
+        texto = (
+            f"Itinerario: OS {indice + 1} de {self._total_itinerario} (N° {numero_os})"
         )
-        self.lbl_progreso_itinerario.setVisible(True)
+        if indice in self._registradas_itinerario:
+            texto += " — ya registrada ✓"
+        self.lbl_progreso_itinerario.setText(texto)
+        self.btn_itin_anterior.setEnabled(indice > 0)
+        self.btn_itin_siguiente.setEnabled(indice < self._total_itinerario - 1)
+        self.barra_itinerario.setVisible(True)
 
-        self.lbl_pdf.setText(f"✓ {self._nombre_itinerario} — OS {indice}/{self._total_itinerario}")
+        self.lbl_pdf.setText(
+            f"✓ {self._nombre_itinerario} — OS {indice + 1}/{self._total_itinerario}"
+        )
         self.lbl_pdf.setStyleSheet("color:green; font-weight:bold;")
 
         if 'padron' in datos and not ubicado:
@@ -396,6 +435,7 @@ class DialogoRegistroOS(QDialog):
             "Ubicación": self.f_ubicacion.text().strip(),
             "Fecha_Ingreso": self.f_fecha_ingreso.text().strip(),
             "Descripción": self.f_descripcion.text().strip(),
+            "Contacto": self.f_contacto.text().strip(),
             "N_Problema": self.f_n_problema.text().strip(),
             "Contrato": self.f_contrato.text().strip(),
             "Tipo": self.f_tipo.text().strip(),
@@ -421,18 +461,24 @@ class DialogoRegistroOS(QDialog):
         iface.mapCanvas().zoomScale(2000)
         iface.mapCanvas().refresh()
 
-        # ── Modo itinerario: si quedan OS en la cola, avanzar a la
-        # siguiente en vez de cerrar el diálogo ────────────────────────
-        if self._cola_itinerario:
-            QMessageBox.information(
-                self, "OS Registrada",
-                f"✓ OS {datos['N°_OS']} registrada.\n"
-                f"  Fuera de zona: {self._texto_fuera_zona(fuera)}\n\n"
-                f"Quedan {len(self._cola_itinerario)} OS por cargar en este itinerario."
-            )
-            siguiente = self._cola_itinerario.pop(0)
-            self._cargar_item_de_cola(siguiente)
-            return
+        # ── Modo itinerario: si quedan OS pendientes, saltar a la siguiente
+        # pendiente en vez de cerrar el diálogo ────────────────────────
+        if self._total_itinerario:
+            self._registradas_itinerario.add(self._indice_itinerario)
+            pendientes = [
+                i for i in range(self._total_itinerario)
+                if i not in self._registradas_itinerario
+            ]
+            if pendientes:
+                QMessageBox.information(
+                    self, "OS Registrada",
+                    f"✓ OS {datos['N°_OS']} registrada.\n"
+                    f"  Fuera de zona: {self._texto_fuera_zona(fuera)}\n\n"
+                    f"Quedan {len(pendientes)} OS por cargar en este itinerario."
+                )
+                posteriores = [i for i in pendientes if i > self._indice_itinerario]
+                self._mostrar_item_itinerario(posteriores[0] if posteriores else pendientes[0])
+                return
 
         extra = "\n\n✓ Itinerario completo." if self._total_itinerario else ""
         QMessageBox.information(
