@@ -94,11 +94,17 @@ def _extraer_fecha_ingreso(texto):
 
 
 def _extraer_descripcion(texto):
-    """Texto tras el 2.º "Informe:" (el 1.º es el del itinerario) hasta "TOTAL DE ARCHIVOS"."""
-    marcas = list(re.finditer(r'Informe:', texto))
-    if len(marcas) < 2:
+    """
+    Texto tras el primer "Informe:" posterior al título "Otras órdenes de
+    servicio del problema", hasta "TOTAL DE ARCHIVOS".
+    """
+    seccion = re.search(r'Otras\s+[oó]rdenes\s+de\s+servicio', texto, re.IGNORECASE)
+    if not seccion:
         return None
-    resto = texto[marcas[1].end():]
+    marca = re.search(r'Informe:', texto[seccion.end():])
+    if not marca:
+        return None
+    resto = texto[seccion.end() + marca.end():]
     corte = re.search(r'TOTAL DE ARCHIVOS', resto)
     if corte:
         resto = resto[:corte.start()]
