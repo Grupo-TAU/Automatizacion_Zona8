@@ -112,7 +112,7 @@ def _extraer_descripcion(texto):
     resto = resto[inicio:]
 
     corte = re.search(
-        r'TOTAL DE ARCHIVOS|Orden de Servicio\s+\d|Sistema\s+[ÚU]nico de Respuesta',
+        r'TOTAL DE ARCHIVOS|Orden de Servicio\s+\d|Sistema\s+[ÚU]nico de Respuesta|Itinerario',
         resto,
     )
     if corte:
