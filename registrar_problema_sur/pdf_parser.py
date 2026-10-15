@@ -94,21 +94,35 @@ def _extraer_fecha_ingreso(texto):
 
 
 def _extraer_descripcion(texto):
-    """
-    Texto tras el primer "Informe:" posterior al título "Otras órdenes de
-    servicio del problema", hasta "TOTAL DE ARCHIVOS".
-    """
     seccion = re.search(r'Otras\s+[oó]rdenes\s+de\s+servicio', texto, re.IGNORECASE)
     if not seccion:
         return None
-    marca = re.search(r'Informe:', texto[seccion.end():])
-    if not marca:
-        return None
-    resto = texto[seccion.end() + marca.end():]
-    corte = re.search(r'TOTAL DE ARCHIVOS', resto)
+    resto = texto[seccion.end():]
+
+    # Se arranca después de la línea "Resultado / Fecha:" de la OS (última fila
+    # antes del recuadro); si no está, se cae a leer desde "Informe:".
+    fila = re.search(r'Resultado\s*/\s*Fecha:[^\n]*\n', resto)
+    if fila:
+        inicio = fila.end()
+    else:
+        marca = re.search(r'Informe:', resto)
+        if not marca:
+            return None
+        inicio = marca.end()
+    resto = resto[inicio:]
+
+    corte = re.search(
+        r'TOTAL DE ARCHIVOS|Orden de Servicio\s+\d|Sistema\s+[ÚU]nico de Respuesta',
+        resto,
+    )
     if corte:
         resto = resto[:corte.start()]
-    return re.sub(r'\s+', ' ', resto).strip() or None
+
+    resto = re.sub(r'Informe:', ' ', resto)
+    # Timestamp de cabecera de la página siguiente que pdfplumber deja antes del título.
+    resto = re.sub(r'\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}\s*$', '', resto.strip())
+    desc = re.sub(r'\s+', ' ', resto).strip()
+    return desc or None
 
 
 def _extraer_contacto(texto):
